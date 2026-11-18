@@ -1,0 +1,10 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 8
+    paths:
+        - src
+    # The floor composer.json promises (php ^8.3). PHPStan then reports
+    # PHP 8.4-only functions and syntax as errors, whatever PHP it runs on.
+    phpVersion: 80300

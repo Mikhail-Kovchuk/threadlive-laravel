@@ -1,0 +1,70 @@
+{
+    "name": "threadlive/threadlive-laravel",
+    "description": "Threadlive — live chat in Telegram threads. The Laravel side: the widget's API, the Telegram webhook, one forum topic per conversation.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "telegram",
+        "telegram-bot",
+        "live-chat",
+        "chat-widget",
+        "customer-support"
+    ],
+    "homepage": "https://github.com/Mikhail-Kovchuk/threadlive",
+    "support": {
+        "issues": "https://github.com/Mikhail-Kovchuk/threadlive/issues",
+        "source": "https://github.com/Mikhail-Kovchuk/threadlive"
+    },
+    "authors": [
+        {
+            "name": "Mikhail Kovchuk"
+        }
+    ],
+    "//": "No version field: installed from the threadlive-laravel mirror, where the git tag is the version. A field here that disagreed with the tag would make composer skip that release with only a warning.",
+    "require": {
+        "php": "^8.3",
+        "illuminate/support": "^12.0|^13.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.0",
+        "laravel/pint": "^1.18",
+        "orchestra/testbench": "^10.0|^11.0",
+        "pestphp/pest": "^3.8|^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Threadlive\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Threadlive\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Threadlive\\ThreadliveServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "analyse": "phpstan analyse --memory-limit=1G",
+        "lint": "pint --test",
+        "format": "pint"
+    },
+    "//config": "platform.php pins dependency resolution to the lowest PHP we support, whatever PHP runs composer. Without it, a developer on 8.4 would lock packages that need 8.4 and never notice; with it, composer refuses them.",
+    "config": {
+        "platform": {
+            "php": "8.3.0"
+        },
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
