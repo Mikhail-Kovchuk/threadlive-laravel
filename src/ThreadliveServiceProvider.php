@@ -6,11 +6,16 @@ namespace Threadlive;
 
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 use Threadlive\Contracts\ChatHost;
+use Threadlive\Events\VisitorMessageReceived;
+use Threadlive\Jobs\DeliverVisitorMessages;
+use Threadlive\Telegram\TelegramClient;
 
 /**
  * The package's entry point in the host application, found by Laravel's
@@ -21,11 +26,20 @@ class ThreadliveServiceProvider extends ServiceProvider
     /** Requests per minute per visitor: polling every 3 s is 20. */
     private const REQUESTS_PER_MINUTE = 120;
 
+    private const TELEGRAM_PER_MINUTE = 20;
+
+    private const DELIVERY_DELAY_SECONDS = 2;
+
     public function register(): void
     {
         // Merged rather than required, so an application that has not
         // published the config still gets working defaults.
         $this->mergeConfigFrom(__DIR__.'/../config/threadlive.php', 'threadlive');
+
+        $this->app->singleton(TelegramClient::class, fn (Application $app) => new TelegramClient(
+            $app->make(HttpFactory::class),
+            (string) config('threadlive.bot_token'),
+        ));
 
         $this->app->bind(ChatHost::class, function (Application $app) {
             $class = config('threadlive.host');
@@ -51,6 +65,15 @@ class ThreadliveServiceProvider extends ServiceProvider
             return Limit::perMinute(self::REQUESTS_PER_MINUTE)->by(
                 is_string($token) && $token !== '' ? 'threadlive:'.hash('sha256', $token) : 'threadlive-ip:'.$request->ip()
             );
+        });
+
+        // Telegram allows about 20 messages a minute from a bot into one
+        // group; every send of the package goes through this.
+        RateLimiter::for('threadlive-telegram', fn () => Limit::perMinute(self::TELEGRAM_PER_MINUTE)->by('threadlive-telegram'));
+
+        // A short delay, so a visitor's burst of messages leaves as one post.
+        Event::listen(VisitorMessageReceived::class, function (VisitorMessageReceived $event) {
+            DeliverVisitorMessages::dispatch($event->conversation->id)->delay(now()->addSeconds(self::DELIVERY_DELAY_SECONDS));
         });
 
         if ($this->app->runningInConsole()) {

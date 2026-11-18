@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Threadlive\Http\Controllers\TelegramWebhookController;
 use Threadlive\Http\Controllers\VisitorController;
 use Threadlive\Http\Middleware\EnsureEnabled;
 
@@ -10,9 +11,10 @@ use Threadlive\Http\Middleware\EnsureEnabled;
  */
 
 $prefix = config('threadlive.route_prefix', 'threadlive');
+$prefix = is_string($prefix) ? $prefix : 'threadlive';
 $middleware = config('threadlive.middleware', ['api']);
 
-Route::prefix(is_string($prefix) ? $prefix : 'threadlive')
+Route::prefix($prefix)
     ->middleware(is_array($middleware) ? $middleware : ['api'])
     ->name('threadlive.')
     ->group(function () {
@@ -27,3 +29,8 @@ Route::prefix(is_string($prefix) ? $prefix : 'threadlive')
             Route::post('email', [VisitorController::class, 'email'])->name('email');
         });
     });
+
+// Telegram's own route: none of the host's middleware (its auth means
+// nothing to Telegram), no throttle (a busy group sends bursts). The secret
+// header is the check.
+Route::post($prefix.'/telegram/webhook', TelegramWebhookController::class)->name('threadlive.webhook');

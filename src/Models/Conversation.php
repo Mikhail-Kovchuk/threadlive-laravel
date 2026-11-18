@@ -25,6 +25,7 @@ use Threadlive\Enums\TopicState;
  * @property array<string, mixed>|null $context
  * @property int|null $telegram_thread_id
  * @property TopicState $topic_state
+ * @property string|null $topic_name
  * @property Carbon|null $topic_closed_at
  * @property Carbon|null $topic_deleted_at
  * @property int|null $assignee_tg_id

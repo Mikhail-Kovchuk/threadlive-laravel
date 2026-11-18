@@ -123,11 +123,17 @@ final class VisitorController
             RateLimiter::hit($key, self::START_WINDOW_SECONDS);
         }
 
+        // Asked here, while there is a request: the topic is posted to later,
+        // from the queue, where there is none.
         $line = $this->host->contextLine($request, $visitor->user, $client);
+        $managerCard = [
+            'lines' => $this->host->cardLines($request, $visitor->user, $client),
+            'admin_url' => $this->host->adminUrl($visitor->user),
+        ];
 
         try {
             [$conversation, $card, $message, $token, $started] = DB::transaction(
-                fn () => $this->record($request, $visitor, $body, $clientMsgId, $client, $line),
+                fn () => $this->record($request, $visitor, $body, $clientMsgId, $client, $line, $managerCard),
             );
         } catch (UniqueConstraintViolationException) {
             // The same retry arrived twice at once; the other one stored it.
@@ -180,9 +186,10 @@ final class VisitorController
 
     /**
      * @param  array{url?: string, title?: string, attributes?: array<string, string>}  $client
+     * @param  array{lines: list<array{label: string, value: string, url?: string}>, admin_url: string|null}  $managerCard
      * @return array{Conversation, ?Message, Message, ?string, bool}
      */
-    private function record(Request $request, Visitor $visitor, string $body, string $clientMsgId, array $client, ?string $line): array
+    private function record(Request $request, Visitor $visitor, string $body, string $clientMsgId, array $client, ?string $line, array $managerCard): array
     {
         $token = null;
         $started = false;
@@ -210,7 +217,11 @@ final class VisitorController
         if ($line !== null && $line !== '') {
             $lastLine = $conversation->messages()->where('direction', Direction::Context)->latest('id')->value('body');
             if ($lastLine !== $line) {
-                $card = $conversation->messages()->create(['direction' => Direction::Context, 'body' => $line]);
+                $card = $conversation->messages()->create([
+                    'direction' => Direction::Context,
+                    'body' => $line,
+                    'delivery' => Delivery::Pending, // the topic shows it too
+                ]);
             }
         }
 
@@ -232,6 +243,7 @@ final class VisitorController
             'last_activity_at' => $now,
             'context' => $client + [
                 'user_agent' => Str::limit((string) $request->userAgent(), 500, ''),
+                'card' => $managerCard,
             ],
         ]);
 

@@ -1,0 +1,76 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Threadlive\Telegram;
+
+use Threadlive\Models\Conversation;
+
+/**
+ * The first post of a topic: who the visitor is, where they wrote from, the
+ * host's own lines (ChatHost::cardLines), and the buttons.
+ *
+ * Everything that came from a visitor or a host goes through e(): the post
+ * is sent with parse_mode=HTML.
+ */
+final class VisitorCard
+{
+    public static function html(Conversation $conversation): string
+    {
+        $context = $conversation->context ?? [];
+        $card = is_array($context['card'] ?? null) ? $context['card'] : [];
+
+        $who = '<b>'.e($conversation->name ?: 'Guest').'</b>';
+        if ($conversation->email) {
+            $who .= ' · '.e($conversation->email);
+        }
+        $who .= $conversation->user_ref !== null ? ' · signed in' : ' · guest';
+
+        $lines = ['👤 '.$who];
+
+        $url = $context['url'] ?? null;
+        if (is_string($url) && self::isWebUrl($url)) {
+            $title = is_string($context['title'] ?? null) && $context['title'] !== '' ? $context['title'] : $url;
+            $lines[] = '🔗 <a href="'.e($url).'">'.e($title).'</a>';
+        }
+
+        foreach (is_array($card['lines'] ?? null) ? $card['lines'] : [] as $line) {
+            if (! is_array($line) || ! is_string($line['label'] ?? null) || ! is_string($line['value'] ?? null)) {
+                continue;
+            }
+
+            $value = is_string($line['url'] ?? null) && self::isWebUrl($line['url'])
+                ? '<a href="'.e($line['url']).'">'.e($line['value']).'</a>'
+                : e($line['value']);
+            $lines[] = '• '.e($line['label']).': '.$value;
+        }
+
+        $adminUrl = $card['admin_url'] ?? null;
+        if (is_string($adminUrl) && self::isWebUrl($adminUrl)) {
+            $lines[] = '🛠 <a href="'.e($adminUrl).'">Open in the admin panel</a>';
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @return list<list<array{text: string, callback_data: string}>>
+     */
+    public static function keyboard(Conversation $conversation): array
+    {
+        $row = [];
+
+        if (config('threadlive.claim_button', true)) {
+            $row[] = ['text' => '🙋 Take', 'callback_data' => "tl:claim:{$conversation->id}"];
+        }
+
+        $row[] = ['text' => '✅ Close', 'callback_data' => "tl:close:{$conversation->id}"];
+
+        return [$row];
+    }
+
+    private static function isWebUrl(string $url): bool
+    {
+        return str_starts_with($url, 'https://') || str_starts_with($url, 'http://');
+    }
+}

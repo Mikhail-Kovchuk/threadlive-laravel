@@ -29,6 +29,8 @@ return new class extends Migration
 
             $table->unsignedBigInteger('telegram_thread_id')->nullable()->unique();
             $table->string('topic_state', 16)->default('none');
+            // The name last set, so a rename happens only when it changes.
+            $table->string('topic_name', 128)->nullable();
             $table->timestamp('topic_closed_at')->nullable();
             $table->timestamp('topic_deleted_at')->nullable();
             $table->bigInteger('assignee_tg_id')->nullable();
