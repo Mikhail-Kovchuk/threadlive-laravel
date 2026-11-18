@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Threadlive;
 
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Request;
@@ -12,6 +13,12 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
+use Threadlive\Console\InstallCommand;
+use Threadlive\Console\MaintainCommand;
+use Threadlive\Console\PruneCommand;
+use Threadlive\Console\SetupCommand;
+use Threadlive\Console\StatusCommand;
+use Threadlive\Console\TestCommand;
 use Threadlive\Contracts\ChatHost;
 use Threadlive\Events\VisitorMessageReceived;
 use Threadlive\Jobs\DeliverVisitorMessages;
@@ -76,7 +83,22 @@ class ThreadliveServiceProvider extends ServiceProvider
             DeliverVisitorMessages::dispatch($event->conversation->id)->delay(now()->addSeconds(self::DELIVERY_DELAY_SECONDS));
         });
 
+        // The host's normal `schedule:run` cron is all it needs.
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
+            $schedule->command('threadlive:maintain')->everyFiveMinutes()->withoutOverlapping();
+            $schedule->command('threadlive:prune')->daily()->withoutOverlapping();
+        });
+
         if ($this->app->runningInConsole()) {
+            $this->commands([
+                InstallCommand::class,
+                SetupCommand::class,
+                StatusCommand::class,
+                TestCommand::class,
+                MaintainCommand::class,
+                PruneCommand::class,
+            ]);
+
             $this->publishes([
                 __DIR__.'/../config/threadlive.php' => config_path('threadlive.php'),
             ], 'threadlive-config');

@@ -7,9 +7,10 @@ namespace Threadlive\Telegram;
 use Threadlive\Enums\ConversationStatus;
 use Threadlive\Enums\Direction;
 use Threadlive\Events\AgentReplied;
-use Threadlive\Events\ConversationClosed;
+use Threadlive\Jobs\RefreshDashboard;
 use Threadlive\Jobs\SyncTopic;
 use Threadlive\Models\Conversation;
+use Threadlive\Support\ConversationActions;
 
 /**
  * One Telegram update: what a manager did in a topic.
@@ -118,6 +119,7 @@ final class UpdateHandler
         ])->save();
 
         SyncTopic::dispatch($conversation->id);
+        RefreshDashboard::dispatch();
         event(new AgentReplied($conversation, $message));
     }
 
@@ -135,20 +137,7 @@ final class UpdateHandler
 
     private function close(Conversation $conversation): void
     {
-        if ($conversation->status === ConversationStatus::Closed) {
-            return;
-        }
-
-        $conversation->messages()->create(['direction' => Direction::System, 'body' => 'Conversation closed']);
-        $conversation->forceFill([
-            'status' => ConversationStatus::Closed,
-            'closed_at' => now(),
-            'closed_by' => 'agent',
-            'last_activity_at' => now(),
-        ])->save();
-
-        SyncTopic::dispatch($conversation->id);
-        event(new ConversationClosed($conversation));
+        ConversationActions::close($conversation, 'agent');
     }
 
     /**
@@ -204,6 +193,7 @@ final class UpdateHandler
 
         $this->assign($conversation, $from);
         SyncTopic::dispatch($conversation->id);
+        RefreshDashboard::dispatch();
         $this->answer($id, 'It’s yours.');
     }
 

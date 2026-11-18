@@ -145,6 +145,7 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
 
         // The visitor wrote: the topic shows ❗ again, reopened if it was closed.
         $topics->sync($conversation->refresh());
+        RefreshDashboard::dispatch();
     }
 
     /**

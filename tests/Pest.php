@@ -31,17 +31,31 @@ function sendMessage(string $body, ?string $token = null, array $extra = []): Te
  * A Bot API that says yes to everything: topics get ids from 100, messages
  * from 1000. `$overrides` answers a method differently — a result, or a
  * callable taking the call's params and the how-many-th call it is (1-based)
- * and returning a result, or an `error` (description) to fail with.
+ * and returning a result, or an `error` (description, and `parameters`) to
+ * fail with.
+ *
+ * Called again in the same test, it changes the answers: Laravel keeps the
+ * first matching fake, so the stub is registered once and reads them from
+ * here.
  *
  * @param  array<string, mixed>  $overrides
  */
 function fakeTelegram(array $overrides = []): void
 {
+    static $registeredFor = null;
+    $GLOBALS['telegramOverrides'] = $overrides;
+
+    if ($registeredFor === spl_object_id(app())) {
+        return;
+    }
+    $registeredFor = spl_object_id(app());
+
     $threadIds = 100;
     $messageIds = 1000;
     $calls = [];
 
-    Http::fake(['api.telegram.org/*' => function (Request $request) use (&$threadIds, &$messageIds, &$calls, $overrides) {
+    Http::fake(['api.telegram.org/*' => function (Request $request) use (&$threadIds, &$messageIds, &$calls) {
+        $overrides = $GLOBALS['telegramOverrides'];
         $method = Str::afterLast($request->url(), '/');
         $calls[$method] = ($calls[$method] ?? 0) + 1;
 
@@ -50,7 +64,12 @@ function fakeTelegram(array $overrides = []): void
             $answer = is_callable($answer) ? $answer($request->data(), $calls[$method]) : $answer;
 
             if (is_array($answer) && array_key_exists('error', $answer)) {
-                return Http::response(['ok' => false, 'error_code' => 400, 'description' => $answer['error']], 400);
+                return Http::response([
+                    'ok' => false,
+                    'error_code' => 400,
+                    'description' => $answer['error'],
+                    'parameters' => $answer['parameters'] ?? null,
+                ], 400);
             }
 
             if ($answer !== null) {
