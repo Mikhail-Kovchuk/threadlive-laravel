@@ -1,6 +1,6 @@
 <?php
 
-use App\Threadlive\ChatHost;
+use Threadlive\Host\GuardChatHost;
 
 /*
  * Threadlive — live chat in Telegram threads.
@@ -41,15 +41,17 @@ return [
     | config/cors.php, or the browser blocks every request.
     |
     | guard: the guard that knows the signed-in user (null = the default one).
-    | host: the class that tells the package about your users; it is
-    | published into your app by threadlive:install.
+    | host: the class that tells the package about your users (implements
+    | Threadlive\Contracts\ChatHost). The default reads the guard and adds
+    | nothing; threadlive:install publishes app/Threadlive/ChatHost.php to
+    | adapt, and points this at it.
     |
     */
 
     'route_prefix' => env('THREADLIVE_ROUTE_PREFIX', 'threadlive'),
     'middleware' => ['api'],
     'guard' => env('THREADLIVE_GUARD'),
-    'host' => ChatHost::class,
+    'host' => GuardChatHost::class,
     'allow_guests' => env('THREADLIVE_ALLOW_GUESTS', true),
 
     /*
