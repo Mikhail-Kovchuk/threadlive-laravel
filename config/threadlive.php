@@ -103,10 +103,21 @@ return [
         'tz' => env('THREADLIVE_HOURS_TZ', 'UTC'),
     ],
 
+    // How often the widget asks for new messages. `closed` runs only for a
+    // live conversation (below) and stops once the visitor has been idle for
+    // `idle_after`; with the panel open, idling slows it to `idle`. A hidden
+    // tab never polls.
     'poll_ms' => [
         'open' => (int) env('THREADLIVE_POLL_MS_OPEN', 3000),
         'closed' => (int) env('THREADLIVE_POLL_MS_CLOSED', 30000),
+        'idle' => (int) env('THREADLIVE_POLL_MS_IDLE', 15000),
+        'idle_after' => (int) env('THREADLIVE_POLL_IDLE_AFTER_MS', 300000),
     ],
+
+    // A conversation is live — worth polling with the panel closed — while it
+    // is not closed and had activity within this many hours. Replies to any
+    // other still arrive with the next page load.
+    'live_hours' => (int) env('THREADLIVE_LIVE_HOURS', 24),
 
     'max_message_length' => (int) env('THREADLIVE_MAX_MESSAGE_LENGTH', 2000),
 

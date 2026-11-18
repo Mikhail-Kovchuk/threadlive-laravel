@@ -19,7 +19,7 @@ describe('bootstrap', function () {
             'online' => true,
             'hours' => ['from' => '09:00', 'to' => '23:00', 'tz' => 'UTC'],
             'can_write' => true,
-            'poll_ms' => ['open' => 3000, 'closed' => 30000],
+            'poll_ms' => ['open' => 3000, 'closed' => 30000, 'idle' => 15000, 'idle_after' => 300000],
             'max_message_length' => 2000,
             'agent_display_name' => 'Support',
             'conversation' => null,
@@ -40,6 +40,20 @@ describe('bootstrap', function () {
         sendMessage('Hello')->assertNotFound();
     });
 
+    it('marks a conversation live only while it is open and recent', function () {
+        $token = sendMessage('Hello')->json('visitor_token');
+        $headers = ['X-Threadlive-Token' => $token];
+        $conversation = Conversation::query()->firstOrFail();
+
+        $this->getJson('/threadlive/bootstrap', $headers)->assertJsonPath('conversation.active', true);
+
+        $conversation->forceFill(['last_activity_at' => now()->subHours(25)])->save();
+        $this->getJson('/threadlive/bootstrap', $headers)->assertJsonPath('conversation.active', false);
+
+        $conversation->forceFill(['last_activity_at' => now(), 'status' => 'closed'])->save();
+        $this->getJson('/threadlive/bootstrap', $headers)->assertJsonPath('conversation.active', false);
+    });
+
     it('does not let guests write when guests are not allowed', function () {
         config()->set('threadlive.allow_guests', false);
 
@@ -57,7 +71,7 @@ describe('a guest conversation', function () {
             ->assertJsonPath('message.direction', 'visitor')
             ->assertJsonPath('message.body', 'Hi! Is the withdrawal still pending?')
             ->assertJsonPath('context', null)
-            ->assertJsonPath('conversation', ['status' => 'waiting', 'unread' => 0, 'email' => null]);
+            ->assertJsonPath('conversation', ['status' => 'waiting', 'unread' => 0, 'email' => null, 'active' => true]);
 
         $token = $first->json('visitor_token');
         expect($token)->toBeString()->toHaveLength(48);

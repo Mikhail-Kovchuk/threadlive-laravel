@@ -52,6 +52,8 @@ final class VisitorController
             'poll_ms' => [
                 'open' => (int) ($pollMs['open'] ?? 3000),
                 'closed' => (int) ($pollMs['closed'] ?? 30000),
+                'idle' => (int) ($pollMs['idle'] ?? 15000),
+                'idle_after' => (int) ($pollMs['idle_after'] ?? 300000),
             ],
             'max_message_length' => $this->maxLength(),
             'agent_display_name' => (string) config('threadlive.agent_display_name', 'Support'),
@@ -309,7 +311,7 @@ final class VisitorController
     }
 
     /**
-     * @return array{status: string, unread: int, email: string|null}
+     * @return array{status: string, unread: int, email: string|null, active: bool}
      */
     private function conversationJson(Conversation $conversation): array
     {
@@ -317,7 +319,18 @@ final class VisitorController
             'status' => $conversation->status->value,
             'unread' => $conversation->unreadCount(),
             'email' => $conversation->email,
+            'active' => $this->isLive($conversation),
         ];
+    }
+
+    /** Worth polling for with the panel closed: not closed, and recent. */
+    private function isLive(Conversation $conversation): bool
+    {
+        $hours = max(0, (int) config('threadlive.live_hours', 24));
+
+        return $conversation->status !== ConversationStatus::Closed
+            && $conversation->last_activity_at !== null
+            && $conversation->last_activity_at->gt(now()->subHours($hours));
     }
 
     /**

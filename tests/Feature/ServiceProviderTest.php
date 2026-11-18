@@ -16,7 +16,7 @@ it('ships safe defaults: off until set up, the guard-reading host', function () 
 
 it('merges the config, so an unpublished one still works', function () {
     expect(config('threadlive.hours'))->toBe(['from' => '09:00', 'to' => '23:00', 'tz' => 'UTC'])
-        ->and(config('threadlive.poll_ms'))->toBe(['open' => 3000, 'closed' => 30000]);
+        ->and(config('threadlive.poll_ms'))->toBe(['open' => 3000, 'closed' => 30000, 'idle' => 15000, 'idle_after' => 300000]);
 });
 
 it('publishes the config and the migration under their tags', function () {
