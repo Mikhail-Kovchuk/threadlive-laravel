@@ -161,6 +161,15 @@ return [
         // 'Something else',
     ],
 
+    // The header's "go elsewhere" button — your support account in Telegram,
+    // WhatsApp, an e-mail address. url null: no button. Only https, http,
+    // tg and mailto links. label null: the widget's own text ("Continue in
+    // Telegram instead").
+    'fallback' => [
+        'url' => null,
+        'label' => null,
+    ],
+
     // How often the widget asks for new messages, in ms. `closed` runs only
     // for a live conversation (live_hours) and stops once the visitor has
     // been idle for `idle_after`; with the panel open, idling slows it to

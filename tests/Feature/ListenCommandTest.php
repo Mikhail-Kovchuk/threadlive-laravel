@@ -1,9 +1,13 @@
 <?php
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Threadlive\Enums\Direction;
 use Threadlive\Enums\TopicState;
 use Threadlive\Models\Conversation;
+use Threadlive\Telegram\TelegramClient;
+use Threadlive\Telegram\TelegramException;
 
 it('takes a manager reply through getUpdates, as the webhook would, and remembers where it got to', function () {
     sendMessage('Hello');
@@ -25,6 +29,24 @@ it('takes a manager reply through getUpdates, as the webhook would, and remember
     expect($conversation->messages()->where('direction', Direction::Agent)->value('body'))->toBe('Answered without a webhook')
         ->and(telegramCalls('getUpdates')[1]['offset'])->toBe(42)
         ->and(Cache::get('threadlive:listen:offset'))->toBe(42);
+});
+
+it('turns a dropped connection into a TelegramException without the bot token', function () {
+    Http::fake(fn () => throw new ConnectionException(
+        'cURL error 28: Connection timed out for https://api.telegram.org/bot123:test-token/getUpdates'
+    ));
+
+    $error = null;
+    try {
+        app(TelegramClient::class)->call('getUpdates');
+    } catch (TelegramException $e) {
+        $error = $e;
+    }
+
+    expect($error)->not->toBeNull()
+        ->and($error?->getMessage())->toContain('connection failed')
+        ->and($error?->getMessage())->not->toContain('test-token')
+        ->and($error?->getMessage())->toContain('bot***/getUpdates');
 });
 
 it('will not take updates away from a webhook unless told to', function () {

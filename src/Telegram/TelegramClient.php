@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Threadlive\Telegram;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Factory as HttpFactory;
+use Illuminate\Http\Client\Response;
 
 /** The Bot API over Laravel's HTTP client, so Http::fake() covers every call. */
 final class TelegramClient
@@ -28,11 +30,11 @@ final class TelegramClient
             throw new TelegramException('THREADLIVE_BOT_TOKEN is not set.');
         }
 
-        $response = $this->http
+        $response = $this->guard($method, fn () => $this->http
             ->acceptJson()
             ->asJson()
             ->timeout($timeout)
-            ->post(self::API."/bot{$this->token}/{$method}", array_filter($params, fn ($value) => $value !== null));
+            ->post(self::API."/bot{$this->token}/{$method}", array_filter($params, fn ($value) => $value !== null)));
 
         $data = $response->json();
 
@@ -70,11 +72,11 @@ final class TelegramClient
             };
         }
 
-        $response = $this->http
+        $response = $this->guard($method, fn () => $this->http
             ->acceptJson()
             ->timeout(120)
             ->attach($file[0], $file[1], $file[2])
-            ->post(self::API."/bot{$this->token}/{$method}", $fields);
+            ->post(self::API."/bot{$this->token}/{$method}", $fields));
 
         $data = $response->json();
 
@@ -101,13 +103,32 @@ final class TelegramClient
             throw new TelegramException('Telegram getFile: no file_path in the answer.');
         }
 
-        $response = $this->http->timeout(120)->get(self::API."/file/bot{$this->token}/{$path}");
+        $response = $this->guard('download', fn () => $this->http->timeout(120)->get(self::API."/file/bot{$this->token}/{$path}"));
 
         if (! $response->successful()) {
             throw new TelegramException("Telegram file download: HTTP {$response->status()}", $response->status());
         }
 
         return ['contents' => $response->body(), 'path' => $path];
+    }
+
+    /**
+     * A network failure (timeout, refused connection) as a TelegramException,
+     * like any other failed call — so a listener retries it instead of dying
+     * — and without the bot token, which Guzzle puts in its message with the
+     * URL: that message ends up in logs and error trackers.
+     *
+     * @param  callable(): Response  $send
+     *
+     * @throws TelegramException
+     */
+    private function guard(string $method, callable $send): Response
+    {
+        try {
+            return $send();
+        } catch (ConnectionException $e) {
+            throw new TelegramException("Telegram {$method}: connection failed (".str_replace($this->token, '***', $e->getMessage()).')');
+        }
     }
 
     /**

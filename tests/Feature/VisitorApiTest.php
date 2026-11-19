@@ -22,6 +22,7 @@ describe('bootstrap', function () {
             'poll_ms' => ['open' => 3000, 'closed' => 30000, 'idle' => 15000, 'idle_after' => 300000],
             'topics' => [],
             'max_message_length' => 2000,
+            'fallback' => null,
             'attachments' => [
                 'enabled' => true,
                 'max_kb' => 10240,
@@ -37,6 +38,17 @@ describe('bootstrap', function () {
         config()->set('threadlive.topics', ['Billing', '  ', 'Something else', 42]);
 
         $this->getJson('/threadlive/bootstrap')->assertJsonPath('topics', ['Billing', 'Something else']);
+    });
+
+    it('serves the header\'s fallback link from the config, and only a safe one', function () {
+        config()->set('threadlive.fallback', ['url' => 'https://t.me/acme_support', 'label' => 'Write to us in Telegram']);
+        $this->getJson('/threadlive/bootstrap')->assertJsonPath('fallback', ['url' => 'https://t.me/acme_support', 'label' => 'Write to us in Telegram']);
+
+        config()->set('threadlive.fallback', ['url' => 'mailto:help@acme.test', 'label' => null]);
+        $this->getJson('/threadlive/bootstrap')->assertJsonPath('fallback', ['url' => 'mailto:help@acme.test', 'label' => null]);
+
+        config()->set('threadlive.fallback', ['url' => 'javascript:alert(1)', 'label' => 'x']);
+        $this->getJson('/threadlive/bootstrap')->assertJsonPath('fallback', null);
     });
 
     it('is offline outside support hours, in their time zone', function () {

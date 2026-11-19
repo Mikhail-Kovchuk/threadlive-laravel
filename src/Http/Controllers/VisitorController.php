@@ -62,6 +62,7 @@ final class VisitorController
                 fn ($topic) => is_string($topic) && trim($topic) !== '',
             )),
             'max_message_length' => $this->maxLength(),
+            'fallback' => $this->fallback(),
             'attachments' => [
                 'enabled' => Attachments::enabled(),
                 'max_kb' => Attachments::maxKb(),
@@ -351,6 +352,24 @@ final class VisitorController
         }
 
         return $client;
+    }
+
+    /**
+     * The header's "go elsewhere" button, or null for none. Only link kinds
+     * that cannot run anything (no javascript:).
+     *
+     * @return array{url: string, label: string|null}|null
+     */
+    private function fallback(): ?array
+    {
+        $url = config('threadlive.fallback.url');
+        $label = config('threadlive.fallback.label');
+
+        if (! is_string($url) || preg_match('#^(https?://|tg://|mailto:)#i', trim($url)) !== 1) {
+            return null;
+        }
+
+        return ['url' => trim($url), 'label' => is_string($label) && trim($label) !== '' ? trim($label) : null];
     }
 
     private function maxLength(): int
