@@ -46,4 +46,30 @@ class ChatHost extends GuardChatHost
         // e.g. isset($client['attributes']['order']) ? 'About order '.$client['attributes']['order'] : null
         return parent::contextLine($request, $user, $client);
     }
+
+    /**
+     * Commands for your managers in the support group, shown in its menu
+     * (run threadlive:setup again after changing them).
+     */
+    public function commands(): array
+    {
+        // e.g. ['order' => 'Look up an order by its code']
+        return parent::commands();
+    }
+
+    /**
+     * The answer to "/order DE-260826-WA" in the group — managers only.
+     * Null when nothing matches.
+     */
+    public function runCommand(string $command, string $argument): ?array
+    {
+        // e.g. if ($command === 'order' && $order = Order::where('code', $argument)->first()) {
+        //     return [
+        //         'title' => "Order {$order->code}",
+        //         'lines' => [['label' => 'Status', 'value' => $order->status], ['label' => 'Client', 'value' => $order->user->email]],
+        //         'url' => url("/admin/orders/{$order->code}"),
+        //     ];
+        // }
+        return parent::runCommand($command, $argument);
+    }
 }

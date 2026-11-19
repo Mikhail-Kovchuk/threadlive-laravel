@@ -7,6 +7,7 @@ namespace Threadlive\Support;
 use Illuminate\Http\Request;
 use Threadlive\ChatUser;
 use Threadlive\Contracts\ChatHost;
+use Threadlive\Events\VisitorSignedIn;
 use Threadlive\Models\Conversation;
 
 /** Who is asking, and their conversation if they have one. */
@@ -45,12 +46,21 @@ final class Visitor
         $conversation = Conversation::query()->where('user_ref', $user->id)->latest('id')->first();
 
         if ($conversation === null && $guestConversation !== null) {
+            // The managers' card gets the admin link now; the topic hears
+            // about it (VisitorSignedIn → AnnounceSignIn).
+            $context = $guestConversation->context ?? [];
+            $card = is_array($context['card'] ?? null) ? $context['card'] : [];
+            $context['card'] = ['lines' => $card['lines'] ?? [], 'admin_url' => $host->adminUrl($user)];
+
             $guestConversation->forceFill([
                 'user_ref' => $user->id,
-                'name' => $guestConversation->name ?? $user->name,
-                'email' => $guestConversation->email ?? $user->email,
+                'name' => $user->name ?? $guestConversation->name,
+                'email' => $user->email ?? $guestConversation->email,
+                'context' => $context,
             ])->save();
             $conversation = $guestConversation;
+
+            event(new VisitorSignedIn($conversation, $user));
         }
 
         return new self($user, $tokenHash, $conversation);

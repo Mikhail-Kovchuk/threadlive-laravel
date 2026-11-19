@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Threadlive\Telegram;
 
+use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Support\Str;
+use Threadlive\Contracts\ChatHost;
 use Threadlive\Enums\ConversationStatus;
 use Threadlive\Enums\Direction;
 use Threadlive\Events\AgentReplied;
@@ -21,13 +23,23 @@ use Threadlive\Support\ConversationActions;
  *   /close                   → closes the conversation and the topic
  *   an edited reply          → the visitor sees the new text
  *   🙋 Take / ✅ Close        → assign / close
+ *   /order DE-1 (anywhere)   → the host's answer (ChatHost::runCommand), managers only
  *
  * Anything else — other chats, bots (this one included), the General
  * topic, service messages, media (phase 2) — is ignored.
  */
 final class UpdateHandler
 {
-    public function __construct(private readonly TelegramClient $telegram) {}
+    /** Cache key of a "send the code in reply" prompt → the command waiting for it. */
+    private const PROMPT_KEY = 'threadlive:prompt:';
+
+    private const PROMPT_TTL = 3600;
+
+    public function __construct(
+        private readonly TelegramClient $telegram,
+        private readonly ChatHost $host,
+        private readonly Cache $cache,
+    ) {}
 
     /**
      * @param  array<mixed>  $update
@@ -54,6 +66,13 @@ final class UpdateHandler
         }
 
         if (($message['from']['is_bot'] ?? false) === true) {
+            return;
+        }
+
+        // Before anything goes to a visitor: a command, in a topic or in
+        // General, is for the managers only.
+        $text = $message['text'] ?? null;
+        if (! $edited && is_string($text) && is_int($message['message_id'] ?? null) && $this->managerCommand($message, trim($text))) {
             return;
         }
 
@@ -235,6 +254,135 @@ final class UpdateHandler
         } catch (TelegramException $e) {
             report($e);
         }
+    }
+
+    /**
+     * "/order DE-1", "/order" (the bot asks for the code), or the reply to
+     * that question. True when the message was a command, handled or not: it
+     * is never passed on to a visitor. /close is the topic's own (false here).
+     *
+     * @param  array<mixed>  $message
+     */
+    private function managerCommand(array $message, string $text): bool
+    {
+        $repliedTo = $message['reply_to_message']['message_id'] ?? null;
+        $waiting = is_int($repliedTo) ? $this->cache->get(self::PROMPT_KEY.$repliedTo) : null;
+
+        if (is_string($waiting)) {
+            $this->cache->forget(self::PROMPT_KEY.$repliedTo);
+            $this->answerCommand($message, $waiting, $text);
+
+            return true;
+        }
+
+        if (preg_match('/^\/([A-Za-z0-9_]+)(@\w+)?(?:\s+(.*))?$/s', $text, $m) !== 1) {
+            return false;
+        }
+
+        $name = strtolower($m[1]);
+        if ($name === 'close') {
+            return false;
+        }
+
+        $commands = $this->host->commands();
+
+        if (! array_key_exists($name, $commands)) {
+            // "/start@SomeOtherBot" is someone else's; a bare one is ours.
+            if (($m[2] ?? '') === '') {
+                $this->replyTo($message, $commands === []
+                    ? 'This bot has no commands besides /close.'
+                    : 'Unknown command /'.e($name).'. Try '.implode(', ', array_map(fn (string $c) => '/'.$c, array_keys($commands))).'.');
+            }
+
+            return true;
+        }
+
+        $argument = trim($m[3] ?? '');
+
+        if ($argument === '') {
+            $prompt = $this->replyTo($message, '🔎 '.e($commands[$name]).' — send it in reply to this message.', [
+                'reply_markup' => [
+                    'force_reply' => true,
+                    'selective' => true,
+                    'input_field_placeholder' => mb_substr($commands[$name], 0, 64),
+                ],
+            ]);
+            if ($prompt !== null) {
+                $this->cache->put(self::PROMPT_KEY.$prompt, $name, self::PROMPT_TTL);
+            }
+
+            return true;
+        }
+
+        $this->answerCommand($message, $name, $argument);
+
+        return true;
+    }
+
+    /**
+     * @param  array<mixed>  $message
+     */
+    private function answerCommand(array $message, string $command, string $argument): void
+    {
+        try {
+            $result = $this->host->runCommand($command, $argument);
+        } catch (\Throwable $e) {
+            report($e);
+            $this->replyTo($message, 'The lookup failed; the details are in the application log.');
+
+            return;
+        }
+
+        if ($result === null) {
+            $this->replyTo($message, 'Nothing found for “'.e($argument).'”.');
+
+            return;
+        }
+
+        $lines = ['<b>'.e($result['title']).'</b>'];
+        foreach ($result['lines'] ?? [] as $line) {
+            $formatted = VisitorCard::line($line);
+            if ($formatted !== null) {
+                $lines[] = $formatted;
+            }
+        }
+        $url = VisitorCard::webUrl($result['url'] ?? null);
+        if ($url !== null) {
+            $lines[] = '🛠 <a href="'.e($url).'">Open in the admin panel</a>';
+        }
+
+        $this->replyTo($message, implode("\n", $lines));
+    }
+
+    /**
+     * A silent reply in the same topic (or General).
+     *
+     * @param  array<mixed>  $message
+     * @param  array<string, mixed>  $extra
+     * @return int|null the reply's message id
+     */
+    private function replyTo(array $message, string $html, array $extra = []): ?int
+    {
+        $inTopic = is_int($message['message_thread_id'] ?? null) && ($message['is_topic_message'] ?? false) === true;
+
+        try {
+            $result = $this->telegram->call('sendMessage', [
+                'chat_id' => (string) config('threadlive.chat_id'),
+                'message_thread_id' => $inTopic ? $message['message_thread_id'] : null,
+                'text' => $html,
+                'parse_mode' => 'HTML',
+                'disable_notification' => true,
+                'link_preview_options' => ['is_disabled' => true],
+                'reply_parameters' => ['message_id' => $message['message_id'], 'allow_sending_without_reply' => true],
+                ...$extra,
+            ]);
+        } catch (TelegramException $e) {
+            report($e);
+
+            return null;
+        }
+
+        return is_array($result) && is_int($result['message_id'] ?? null) ? $result['message_id'] : null;
     }
 
     /**

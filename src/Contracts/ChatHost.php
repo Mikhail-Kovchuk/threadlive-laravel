@@ -40,4 +40,22 @@ interface ChatHost
      * @param  array{url?: string, title?: string, attributes?: array<string, string>}  $client  what the widget sent
      */
     public function contextLine(Request $request, ?ChatUser $user, array $client): ?string;
+
+    /**
+     * Commands for the managers in the support group, listed in the group's
+     * menu by threadlive:setup: e.g. ['order' => 'Look up an order by its
+     * code']. Names: lowercase letters, digits and _, up to 32.
+     *
+     * @return array<string, string> name => description
+     */
+    public function commands(): array;
+
+    /**
+     * The answer to "/{command} {argument}" in the group, or null when
+     * nothing matches. Plain text; the package escapes it. Only managers see
+     * it — never the visitor.
+     *
+     * @return array{title: string, lines?: list<array{label: string, value: string, url?: string}>, url?: string}|null
+     */
+    public function runCommand(string $command, string $argument): ?array;
 }

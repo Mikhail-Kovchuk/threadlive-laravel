@@ -35,14 +35,10 @@ final class VisitorCard
         }
 
         foreach (is_array($card['lines'] ?? null) ? $card['lines'] : [] as $line) {
-            if (! is_array($line) || ! is_string($line['label'] ?? null) || ! is_string($line['value'] ?? null)) {
-                continue;
+            $formatted = self::line($line);
+            if ($formatted !== null) {
+                $lines[] = $formatted;
             }
-
-            $value = is_string($line['url'] ?? null) && self::isWebUrl($line['url'])
-                ? '<a href="'.e($line['url']).'">'.e($line['value']).'</a>'
-                : e($line['value']);
-            $lines[] = '• '.e($line['label']).': '.$value;
         }
 
         $adminUrl = $card['admin_url'] ?? null;
@@ -67,6 +63,28 @@ final class VisitorCard
         $row[] = ['text' => '✅ Close', 'callback_data' => "tl:close:{$conversation->id}"];
 
         return [$row];
+    }
+
+    /**
+     * "• Label: value", the value linked when there is a web URL. Null for
+     * anything that is not a label/value pair of strings.
+     */
+    public static function line(mixed $line): ?string
+    {
+        if (! is_array($line) || ! is_string($line['label'] ?? null) || ! is_string($line['value'] ?? null)) {
+            return null;
+        }
+
+        $url = self::webUrl($line['url'] ?? null);
+        $value = $url !== null ? '<a href="'.e($url).'">'.e($line['value']).'</a>' : e($line['value']);
+
+        return '• '.e($line['label']).': '.$value;
+    }
+
+    /** The value when it is an http(s) URL — never a javascript: or tg: link. */
+    public static function webUrl(mixed $url): ?string
+    {
+        return is_string($url) && self::isWebUrl($url) ? $url : null;
     }
 
     private static function isWebUrl(string $url): bool

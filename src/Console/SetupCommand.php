@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Threadlive\Console;
 
 use Illuminate\Console\Command;
+use Threadlive\Contracts\ChatHost;
 use Threadlive\Telegram\Dashboard;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
@@ -32,7 +33,7 @@ final class SetupCommand extends Command
 
     private bool $ok = true;
 
-    public function handle(TelegramClient $telegram, Dashboard $dashboard): int
+    public function handle(TelegramClient $telegram, Dashboard $dashboard, ChatHost $host): int
     {
         $bot = $this->bot($telegram);
         if ($bot === null) {
@@ -60,6 +61,8 @@ final class SetupCommand extends Command
 
             return self::FAILURE;
         }
+
+        $this->registerCommands($telegram, $chatId, $host);
 
         if ($url !== null) {
             $telegram->call('setWebhook', [
@@ -172,6 +175,31 @@ final class SetupCommand extends Command
         }
 
         $this->pass('Bot rights', implode(', ', self::REQUIRED_RIGHTS));
+    }
+
+    /**
+     * The group's "/" menu: /close plus the host's own (ChatHost::commands),
+     * for this group only.
+     */
+    private function registerCommands(TelegramClient $telegram, string $chatId, ChatHost $host): void
+    {
+        $commands = [['command' => 'close', 'description' => 'Close this conversation (in its topic)']];
+
+        foreach ($host->commands() as $name => $description) {
+            if (preg_match('/^[a-z0-9_]{1,32}$/', $name) !== 1 || $name === 'close') {
+                $this->components->warn("Command “{$name}” skipped: lowercase letters, digits and _ only, up to 32, not “close”.");
+
+                continue;
+            }
+            $commands[] = ['command' => $name, 'description' => mb_substr($description !== '' ? $description : $name, 0, 256)];
+        }
+
+        $telegram->call('setMyCommands', [
+            'commands' => $commands,
+            'scope' => ['type' => 'chat', 'chat_id' => $chatId],
+        ]);
+
+        $this->pass('Commands', implode(' ', array_map(fn (array $c) => '/'.$c['command'], $commands)));
     }
 
     private function webhookUrl(): ?string

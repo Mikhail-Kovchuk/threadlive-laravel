@@ -22,6 +22,8 @@ use Threadlive\Console\StatusCommand;
 use Threadlive\Console\TestCommand;
 use Threadlive\Contracts\ChatHost;
 use Threadlive\Events\VisitorMessageReceived;
+use Threadlive\Events\VisitorSignedIn;
+use Threadlive\Jobs\AnnounceSignIn;
 use Threadlive\Jobs\DeliverVisitorMessages;
 use Threadlive\Telegram\TelegramClient;
 
@@ -82,6 +84,10 @@ class ThreadliveServiceProvider extends ServiceProvider
         // A short delay, so a visitor's burst of messages leaves as one post.
         Event::listen(VisitorMessageReceived::class, function (VisitorMessageReceived $event) {
             DeliverVisitorMessages::dispatch($event->conversation->id)->delay(now()->addSeconds(self::DELIVERY_DELAY_SECONDS));
+        });
+
+        Event::listen(VisitorSignedIn::class, function (VisitorSignedIn $event) {
+            AnnounceSignIn::dispatch($event->conversation->id);
         });
 
         // The host's normal `schedule:run` cron is all it needs.
