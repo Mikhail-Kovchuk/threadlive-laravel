@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Threadlive\Http\Controllers;
 
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
@@ -36,6 +38,9 @@ final class VisitorController
     private const STARTS_PER_WINDOW = 5;
 
     private const START_WINDOW_SECONDS = 600;
+
+    /** Messages one conversation may send a minute; a burst within it goes to the topic as one post. */
+    private const MESSAGES_PER_MINUTE = 15;
 
     /** The most a full-history request returns. */
     private const HISTORY_LIMIT = 500;
@@ -156,6 +161,15 @@ final class VisitorController
             if ($existing !== null) {
                 return $this->stored($visitor->conversation, $existing, null, null, 200);
             }
+
+            // Every message becomes a post in the group, and Telegram lets a
+            // bot post about 20 a minute there — for all conversations
+            // together. One visitor must not use that up for everyone.
+            $key = 'threadlive:sends:'.$visitor->conversation->id;
+            if (RateLimiter::tooManyAttempts($key, self::MESSAGES_PER_MINUTE)) {
+                abort(429, 'You are sending messages too fast. Wait a moment and send again.');
+            }
+            RateLimiter::hit($key, 60);
         }
 
         if ($visitor->conversation === null) {
@@ -179,10 +193,22 @@ final class VisitorController
             'admin_url' => $this->host->adminUrl($visitor->user),
         ];
 
+        $record = fn (Visitor $visitor) => DB::transaction(
+            fn () => $this->record($request, $visitor, $body, $clientMsgId, $client, $line, $managerCard, $files),
+        );
+
         try {
-            [$conversation, $card, $message, $token, $started] = DB::transaction(
-                fn () => $this->record($request, $visitor, $body, $clientMsgId, $client, $line, $managerCard, $files),
-            );
+            if ($visitor->user !== null && $visitor->conversation === null) {
+                // A signed-in user's first messages, sent side by side (two
+                // tabs), must start one conversation: in turn, each asking
+                // again whether there is one now.
+                [$conversation, $card, $message, $token, $started] = Cache::lock('threadlive:start-user:'.$visitor->user->id, 10)
+                    ->block(5, fn () => $record($visitor = Visitor::resolve($request, $this->host)));
+            } else {
+                [$conversation, $card, $message, $token, $started] = $record($visitor);
+            }
+        } catch (LockTimeoutException) {
+            abort(409, 'The message could not be sent. Try again.');
         } catch (UniqueConstraintViolationException) {
             // The same retry arrived twice at once; the other one stored it.
             $conversation = $visitor->conversation ?? Visitor::resolve($request, $this->host)->conversation;
@@ -193,6 +219,7 @@ final class VisitorController
         }
 
         if ($started) {
+            RateLimiter::hit('threadlive:sends:'.$conversation->id, 60); // the first counts too
             event(new ConversationStarted($conversation));
         }
         event(new VisitorMessageReceived($conversation, $message, $card));
@@ -255,7 +282,8 @@ final class VisitorController
                 'visitor_token_hash' => $token === null ? null : hash('sha256', $token),
                 'name' => $visitor->user?->name,
                 'email' => $visitor->user?->email,
-                'locale' => $request->getPreferredLanguage(),
+                // The column holds 16; an odd Accept-Language can be longer.
+                'locale' => Str::limit((string) $request->getPreferredLanguage(), 16, '') ?: null,
             ]);
         }
 

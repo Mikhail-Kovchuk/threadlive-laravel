@@ -181,6 +181,36 @@ describe('validation', function () {
     });
 });
 
+describe('limits', function () {
+    it('slows down one conversation sending too fast, and no one else', function () {
+        $token = sendMessage('1')->json('visitor_token');
+        foreach (range(2, 15) as $n) {
+            sendMessage((string) $n, $token)->assertCreated();
+        }
+
+        sendMessage('16', $token)->assertTooManyRequests()
+            ->assertJsonPath('message', 'You are sending messages too fast. Wait a moment and send again.');
+        sendMessage('Someone else')->assertCreated();
+    });
+
+    it('does not give a new allowance to a new made-up token on every request', function () {
+        foreach (range(1, 600) as $n) {
+            $this->getJson('/threadlive/bootstrap', ['X-Threadlive-Token' => "made-up-{$n}"]);
+        }
+
+        $this->getJson('/threadlive/bootstrap', ['X-Threadlive-Token' => 'made-up-again'])->assertTooManyRequests();
+    });
+
+    it('keeps an odd, long Accept-Language within the column', function () {
+        sendMessage('Hello', null, [])->assertCreated();
+        $this->postJson('/threadlive/messages', ['body' => 'Hi', 'client_msg_id' => (string) Str::uuid()], [
+            'Accept-Language' => 'sr-Latn-RS-x-private-extension-tag',
+        ])->assertCreated();
+
+        expect(mb_strlen((string) Conversation::query()->latest('id')->firstOrFail()->locale))->toBeLessThanOrEqual(16);
+    });
+});
+
 describe('unread and e-mail', function () {
     it('counts agent replies until the visitor has read them', function () {
         $token = sendMessage('Hello')->json('visitor_token');

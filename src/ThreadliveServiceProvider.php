@@ -39,6 +39,9 @@ class ThreadliveServiceProvider extends ServiceProvider
     /** Requests per minute per visitor: polling every 3 s is 20. */
     private const REQUESTS_PER_MINUTE = 120;
 
+    /** Requests per minute from one IP, whatever tokens they carry. */
+    private const REQUESTS_PER_MINUTE_PER_IP = 600;
+
     private const TELEGRAM_PER_MINUTE = 20;
 
     private const DELIVERY_DELAY_SECONDS = 2;
@@ -73,12 +76,16 @@ class ThreadliveServiceProvider extends ServiceProvider
         $this->loadRoutesFrom(__DIR__.'/../routes/threadlive.php');
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'threadlive');
 
+        // Per visitor, and per IP as well: the token is the client's to choose,
+        // so a new one per request must not mean a new allowance. The IP limit
+        // is wider — an office or a mobile carrier puts many people on one.
         RateLimiter::for('threadlive', function (Request $request) {
             $token = $request->header('X-Threadlive-Token');
+            $ip = Limit::perMinute(self::REQUESTS_PER_MINUTE_PER_IP)->by('threadlive-ip:'.$request->ip());
 
-            return Limit::perMinute(self::REQUESTS_PER_MINUTE)->by(
-                is_string($token) && $token !== '' ? 'threadlive:'.hash('sha256', $token) : 'threadlive-ip:'.$request->ip()
-            );
+            return is_string($token) && $token !== ''
+                ? [Limit::perMinute(self::REQUESTS_PER_MINUTE)->by('threadlive:'.hash('sha256', $token)), $ip]
+                : [Limit::perMinute(self::REQUESTS_PER_MINUTE)->by('threadlive-guest:'.$request->ip()), $ip];
         });
 
         // Telegram allows about 20 messages a minute from a bot into one

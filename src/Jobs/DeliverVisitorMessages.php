@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Threadlive\Jobs;
 
+use DateTimeInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -12,6 +13,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Threadlive\Enums\Delivery;
 use Threadlive\Enums\Direction;
@@ -42,10 +44,21 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
     /** Telegram allows 4096; leave room for the joins. */
     private const MAX_TEXT = 3800;
 
+    private const TELEGRAM_MAX = 4096;
+
     /** Longer quotes start collapsed. */
     private const LONG_QUOTE = 300;
 
-    public int $tries = 5;
+    /**
+     * Held back by the rate limit, or by another job of this conversation,
+     * is not a failure: only real errors count, up to 5, within two hours.
+     */
+    public int $maxExceptions = 5;
+
+    public function retryUntil(): DateTimeInterface
+    {
+        return now()->addHours(2);
+    }
 
     public function __construct(public readonly int $conversationId)
     {
@@ -99,20 +112,88 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
 
             // Deleted by hand in Telegram: a new topic, with a summary, and
             // the messages again. Never lose one.
+            // What went into the old topic so far goes again into the new one.
             $conversation->forceFill(['topic_state' => TopicState::Deleted, 'topic_deleted_at' => now()])->save();
+            $conversation->messages()->where('delivery', Delivery::Pending)->update(['telegram_message_id' => null]);
             $this->deliver($conversation, $topics, $telegram);
         }
     }
 
+    /**
+     * What this job tried and could not send is Failed — not messages that
+     * arrived since: their own job sends them.
+     */
     public function failed(?Throwable $exception): void
     {
+        $upTo = Cache::pull(self::upToKey($this->conversationId));
+
         Message::query()
             ->where('conversation_id', $this->conversationId)
             ->where('delivery', Delivery::Pending)
+            ->when(is_int($upTo), fn ($q) => $q->where('id', '<=', $upTo))
             ->update(['delivery' => Delivery::Failed]);
 
         // The dashboard's "⚠️ Not delivered" line is how managers learn of it.
         RefreshDashboard::dispatch();
+    }
+
+    private static function upToKey(int $conversationId): string
+    {
+        return 'threadlive:delivering:'.$conversationId;
+    }
+
+    /**
+     * Telegram takes up to 4096 characters. A batch is kept under that; one
+     * very long message (with its translation) is not — it goes as several
+     * plain parts instead of being refused forever.
+     *
+     * @param  Collection<int, Message>  $messages
+     * @return list<string>
+     */
+    private static function fit(string $html, Collection $messages): array
+    {
+        if (mb_strlen($html) <= self::TELEGRAM_MAX) {
+            return [$html];
+        }
+
+        $parts = [];
+        foreach ($messages as $message) {
+            array_push($parts, ...self::chunks($message->body));
+
+            $translation = $message->translation;
+            if ($translation !== null) {
+                $label = '🌐 <b>'.Languages::label($translation['from']).' → '.Languages::label($translation['to']).'</b>';
+                $chunks = self::chunks($translation['text']);
+                $chunks[0] = $label."\n".$chunks[0];
+                array_push($parts, ...$chunks);
+            }
+        }
+
+        return $parts;
+    }
+
+    /**
+     * Plain text cut into escaped pieces that each fit in a message.
+     *
+     * @return list<string>
+     */
+    private static function chunks(string $text): array
+    {
+        $chunks = [];
+        $current = '';
+
+        foreach (mb_str_split($text, 200) as $piece) {
+            if ($current !== '' && mb_strlen(e($current.$piece)) > self::MAX_TEXT) {
+                $chunks[] = e($current);
+                $current = '';
+            }
+            $current .= $piece;
+        }
+
+        // The loop always leaves the last piece here ('' for no text at all).
+        $chunks[] = e($current);
+
+        return $chunks;
     }
 
     /** The queue connection and name from config('threadlive.queue'). */
@@ -141,24 +222,62 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
             return;
         }
 
+        Cache::put(self::upToKey($conversation->id), (int) $pending->max('id'), now()->addDay());
+
+        // A text that went out on an earlier try, whose files did not:
+        // the text is not posted twice.
+        $wentOut = fn (Message $m) => $m->telegram_message_id !== null && ($m->attachments === null || $m->attachments === []);
+        $textSent = $pending->filter($wentOut);
+        $pending = $pending->reject($wentOut);
+        if ($textSent->isNotEmpty()) {
+            Message::query()->whereKey($textSent->pluck('id')->all())->update(['delivery' => Delivery::Sent]);
+        }
+
         $this->translate($conversation, $pending);
         $thread = $topics->ensureOpen($conversation);
 
-        foreach ($this->batches($pending) as [$messages, $html, $silent, $files]) {
-            $messageId = $html === null ? null : $telegram->sendMessage($topics->chatId(), $html, $thread, $silent);
+        foreach ($this->batches($pending->values()) as [$messages, $html, $silent, $files]) {
+            $ids = $messages->pluck('id')->all();
+            $messageId = $messages->first()?->telegram_message_id;
 
-            // The files after the text; the first one makes the sound when
-            // there was no text to make it.
-            foreach ($files as $i => $file) {
-                $fileMessageId = $this->sendFile($telegram, $topics->chatId(), $thread, $file, silent: $html !== null || $i > 0);
-                $messageId ??= $fileMessageId;
+            if ($html !== null && $messageId === null) {
+                foreach (self::fit($html, $messages) as $i => $part) {
+                    $partId = $telegram->sendMessage($topics->chatId(), $part, $thread, $silent || $i > 0);
+                    $messageId ??= $partId;
+                }
+                Message::query()->whereKey($ids)->update(['telegram_message_id' => $messageId]);
             }
 
-            Message::query()->whereKey($messages->pluck('id')->all())->update([
+            // The files after the text; the first one makes the sound when
+            // there was no text to make it. Each is noted as sent, so a retry
+            // after a failure halfway sends only the rest.
+            $owner = $messages->first();
+            $sentOne = $html !== null;
+            foreach ($files as $key => $file) {
+                if (isset($file['telegram_message_id'])) {
+                    $sentOne = true;
+
+                    continue;
+                }
+
+                $fileMessageId = $this->sendFile($telegram, $topics->chatId(), $thread, $file, silent: $sentOne);
+                $sentOne = true;
+                $messageId ??= $fileMessageId;
+
+                if ($owner !== null && is_array($owner->attachments)) {
+                    $attachments = $owner->attachments;
+                    $attachments[$key]['telegram_message_id'] = $fileMessageId ?? 0;
+                    $owner->forceFill(['attachments' => $attachments])->save();
+                }
+            }
+
+            Message::query()->whereKey($ids)->update([
                 'delivery' => Delivery::Sent,
                 'telegram_message_id' => $messageId,
             ]);
         }
+
+        Cache::forget(self::upToKey($conversation->id));
 
         // The visitor wrote: the topic shows ❗ again, reopened if it was closed.
         $topics->sync($conversation->refresh());
@@ -249,7 +368,7 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
      * Translations follow the originals: "🌐 ES → EN", then the text.
      *
      * @param  Collection<int, Message>  $pending
-     * @return list<array{Collection<int, Message>, string|null, bool, list<array<string, mixed>>}>
+     * @return list<array{Collection<int, Message>, string|null, bool, array<array-key, array<string, mixed>>}>
      */
     private function batches(Collection $pending): array
     {
@@ -277,7 +396,7 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
             if ($message->attachments !== null && $message->attachments !== []) {
                 $flush();
                 $own = new Collection([$message]);
-                $batches[] = [$own, trim($message->body) === '' ? null : self::compose($own), false, array_values($message->attachments)];
+                $batches[] = [$own, trim($message->body) === '' ? null : self::compose($own), false, $message->attachments];
 
                 continue;
             }

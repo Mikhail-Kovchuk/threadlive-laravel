@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Threadlive\Jobs;
 
+use DateTimeInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -25,7 +26,16 @@ final class RefreshDashboard implements ShouldBeUnique, ShouldQueue
 
     private const DEBOUNCE_SECONDS = 30;
 
-    public int $tries = 3;
+    /**
+     * Held back by the rate limit, or by another job of this conversation,
+     * is not a failure: only real errors count, up to 3, within half an hour.
+     */
+    public int $maxExceptions = 3;
+
+    public function retryUntil(): DateTimeInterface
+    {
+        return now()->addMinutes(30);
+    }
 
     public int $uniqueFor = self::DEBOUNCE_SECONDS;
 

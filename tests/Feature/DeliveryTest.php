@@ -9,6 +9,7 @@ use Threadlive\Jobs\DeliverVisitorMessages;
 use Threadlive\Jobs\RefreshDashboard;
 use Threadlive\Models\Conversation;
 use Threadlive\Telegram\TelegramClient;
+use Threadlive\Telegram\TelegramException;
 use Threadlive\Telegram\Topics;
 use Threadlive\Tests\Fixtures\FakeChatHost;
 
@@ -118,4 +119,41 @@ it('marks what it could not send as failed when it gives up', function () {
 
     expect($conversation->messages()->where('direction', Direction::Visitor)->first()?->delivery)->toBe(Delivery::Failed);
     Queue::assertPushed(RefreshDashboard::class);
+});
+
+it('leaves messages that came after it gave up to their own job', function () {
+    fakeTelegram(['sendMessage' => ['error' => 'Bad Gateway']]);
+    $token = sendMessage('Hello')->json('visitor_token');
+    $conversation = Conversation::query()->firstOrFail();
+    expect(fn () => deliver($conversation))->toThrow(TelegramException::class);
+
+    sendMessage('Anyone there?', $token);
+    (new DeliverVisitorMessages($conversation->id))->failed(new RuntimeException('down'));
+
+    expect($conversation->messages()->where('direction', Direction::Visitor)->pluck('delivery', 'body')->all())
+        ->toBe(['Hello' => Delivery::Failed, 'Anyone there?' => Delivery::Pending]);
+});
+
+it('waits out rate limits rather than counting them as failures', function () {
+    $job = new DeliverVisitorMessages(1);
+
+    expect($job->retryUntil()->getTimestamp())->toBeGreaterThan(now()->addHour()->getTimestamp())
+        ->and($job->maxExceptions)->toBe(5)
+        ->and(property_exists($job, 'tries'))->toBeFalse();
+});
+
+it('splits one message too long for Telegram, translation and all, into parts', function () {
+    fakeTelegram();
+    config()->set('threadlive.max_message_length', 5000);
+    $long = str_repeat('Lorem ipsum & dolor sit amet. ', 140); // 4200 characters, more once escaped
+    sendMessage($long);
+    $conversation = Conversation::query()->firstOrFail();
+
+    deliver($conversation);
+
+    $parts = collect(telegramCalls('sendMessage'))->pluck('text')->filter(fn ($t) => str_contains($t, 'Lorem'));
+    expect($parts->count())->toBeGreaterThan(1)
+        ->and($parts->every(fn ($t) => mb_strlen($t) <= 4096))->toBeTrue()
+        ->and(html_entity_decode($parts->implode('')))->toBe(rtrim($long)) // TrimStrings
+        ->and($conversation->messages()->where('direction', Direction::Visitor)->first()?->delivery)->toBe(Delivery::Sent);
 });

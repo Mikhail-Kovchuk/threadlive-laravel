@@ -9,6 +9,7 @@ use Threadlive\Jobs\DeliverVisitorMessages;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
 use Threadlive\Telegram\TelegramClient;
+use Threadlive\Telegram\TelegramException;
 use Threadlive\Telegram\Topics;
 
 /**
@@ -118,6 +119,23 @@ describe('files in the topic', function () {
         $document = multipart(telegramCalls('sendDocument')[0]);
         expect($document['document']['filename'])->toBe('invoice.pdf')
             ->and($document['disable_notification'])->toBe('false')
+            ->and(Message::query()->where('direction', Direction::Visitor)->first()?->delivery?->value)->toBe('sent');
+    });
+
+    it('sends only what is left after failing halfway: no second copy of the text or the first file', function () {
+        fakeTelegram(['sendDocument' => fn (array $params, int $nth) => $nth === 2 ? ['error' => 'Bad Gateway'] : ['message_id' => 2000 + $nth]]);
+        sendFiles([
+            UploadedFile::fake()->create('one.pdf', 10, 'application/pdf'),
+            UploadedFile::fake()->create('two.pdf', 10, 'application/pdf'),
+        ], 'Both invoices');
+
+        expect(fn () => deliverFiles())->toThrow(TelegramException::class);
+        deliverFiles();
+
+        $texts = collect(telegramCalls('sendMessage'))->pluck('text')->filter(fn ($t) => $t === 'Both invoices');
+        $names = collect(telegramCalls('sendDocument'))->map(fn ($call) => multipart($call)['document']['filename']);
+        expect($texts)->toHaveCount(1)
+            ->and($names->all())->toBe(['one.pdf', 'two.pdf', 'two.pdf'])
             ->and(Message::query()->where('direction', Direction::Visitor)->first()?->delivery?->value)->toBe('sent');
     });
 

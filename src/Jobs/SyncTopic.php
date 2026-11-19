@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Threadlive\Jobs;
 
+use DateTimeInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -26,7 +27,16 @@ final class SyncTopic implements ShouldBeUniqueUntilProcessing, ShouldQueue
     use InteractsWithQueue;
     use Queueable;
 
-    public int $tries = 5;
+    /**
+     * Held back by the rate limit, or by another job of this conversation,
+     * is not a failure: only real errors count, up to 5, within two hours.
+     */
+    public int $maxExceptions = 5;
+
+    public function retryUntil(): DateTimeInterface
+    {
+        return now()->addHours(2);
+    }
 
     public function __construct(public readonly int $conversationId)
     {
