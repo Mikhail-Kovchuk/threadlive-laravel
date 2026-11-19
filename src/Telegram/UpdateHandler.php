@@ -10,6 +10,7 @@ use Threadlive\Contracts\ManagerCommand;
 use Threadlive\Enums\ConversationStatus;
 use Threadlive\Enums\Direction;
 use Threadlive\Events\AgentReplied;
+use Threadlive\Jobs\DeliverVisitorMessages;
 use Threadlive\Jobs\RefreshDashboard;
 use Threadlive\Jobs\SyncTopic;
 use Threadlive\Models\Conversation;
@@ -176,9 +177,10 @@ final class UpdateHandler
             ? 'Your replies go out in <b>'.Languages::label($conversation->visitor_language).'</b>.'
             : 'Your replies go out in the visitor\'s language once they write.';
 
-        if ($translation !== null && ! $translation->isSameLanguage()) {
+        if ($last !== null && $translation !== null && ! $translation->isSameLanguage()) {
             $lines[] = '';
-            $lines[] = 'Their last message: <i>'.e($translation->text).'</i>';
+            $lines[] = 'Their last message:';
+            $lines[] = DeliverVisitorMessages::quote(e($last->body)).e($translation->text);
         }
 
         $this->replyTo($message, implode("\n", $lines));
@@ -209,7 +211,9 @@ final class UpdateHandler
         }
 
         $reply->forceFill(['translation' => $translation->toArray()])->save();
-        $this->replyTo($telegramMessage, '🌐 → '.Languages::label($language).': '.e($translation->text));
+        // Quoted, like everything in the visitor's language in the topic.
+        $this->replyTo($telegramMessage, '🌐 <b>→ '.Languages::label($language)."</b>\n"
+            .DeliverVisitorMessages::quote(e($translation->text)));
     }
 
     /**

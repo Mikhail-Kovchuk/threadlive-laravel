@@ -84,10 +84,22 @@ it('posts the visitor\'s message with its translation, once', function () {
     deliverNow($conversation); // nothing pending: nothing translated again
 
     $posted = collect(telegramCalls('sendMessage'))->last()['text'];
-    expect($posted)->toBe("Hola, mi pedido sigue pendiente.\n\nHola otra vez\n\n🌐 <b>ES → EN</b>\n"
+    expect($posted)->toBe("<blockquote>Hola, mi pedido sigue pendiente.\n\nHola otra vez</blockquote>🌐 <b>ES → EN</b>\n"
         ."[en] Hola, mi pedido sigue pendiente.\n\n[en] Hola otra vez")
         ->and(FakeTranslator::$calls)->toHaveCount(2)
         ->and($conversation->refresh()->visitor_language)->toBe('es');
+});
+
+it('collapses a long original, so the translation stays in view', function () {
+    fakeTelegram();
+    [$conversation, $token] = spanishConversation();
+    $conversation->forceFill(['translate_to' => 'en'])->save();
+    $conversation->messages()->update(['delivery' => 'sent']);
+
+    sendMessage('Hola '.str_repeat('muy largo ', 40), $token);
+    deliverNow($conversation);
+
+    expect(collect(telegramCalls('sendMessage'))->last()['text'])->toStartWith('<blockquote expandable>Hola muy largo');
 });
 
 it('adds no translation to a message already in the managers\' language', function () {
@@ -114,7 +126,7 @@ it('sends the visitor a manager\'s reply in their language, and shows the manage
     expect($reply['body'])->toBe('[es] Your order is being checked');
 
     $note = collect(telegramCalls('sendMessage'))->last();
-    expect($note['text'])->toBe('🌐 → ES: [es] Your order is being checked')
+    expect($note['text'])->toBe("🌐 <b>→ ES</b>\n<blockquote>[es] Your order is being checked</blockquote>")
         ->and($note['reply_parameters']['message_id'])->toBe(5100)
         ->and($note['disable_notification'])->toBeTrue();
 

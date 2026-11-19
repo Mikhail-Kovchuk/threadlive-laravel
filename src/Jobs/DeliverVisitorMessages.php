@@ -41,6 +41,9 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
     /** Telegram allows 4096; leave room for the joins. */
     private const MAX_TEXT = 3800;
 
+    /** Longer quotes start collapsed. */
+    private const LONG_QUOTE = 300;
+
     public int $tries = 5;
 
     public function __construct(public readonly int $conversationId)
@@ -233,6 +236,11 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
     }
 
     /**
+     * Untranslated: the text as written. Translated: the visitor's original
+     * in a quote — the one rule in the topic is "quoted = the visitor's
+     * language" — then "🌐 ES → EN" and the translation as plain text. A long
+     * original is a collapsed quote, so the translation stays in view.
+     *
      * @param  Collection<int, Message>  $messages
      */
     private static function compose(Collection $messages): string
@@ -247,7 +255,16 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
         /** @var array{text: string, from: string, to: string} $first */
         $first = $translated->first()->translation;
 
-        return $originals."\n\n🌐 <b>".Languages::label($first['from']).' → '.Languages::label($first['to'])."</b>\n"
+        return self::quote($originals)
+            .'🌐 <b>'.Languages::label($first['from']).' → '.Languages::label($first['to'])."</b>\n"
             .$translated->map(fn (Message $m) => e($m->translation['text'] ?? ''))->implode("\n\n");
+    }
+
+    /** Text in the visitor's language, as a quote; collapsed when long. */
+    public static function quote(string $escapedHtml): string
+    {
+        $tag = mb_strlen($escapedHtml) > self::LONG_QUOTE ? '<blockquote expandable>' : '<blockquote>';
+
+        return $tag.$escapedHtml.'</blockquote>';
     }
 }
