@@ -161,7 +161,7 @@ it('lists /translate in the group\'s menu when translation is set up', function 
 
     $this->artisan('threadlive:setup', ['--local' => true])->assertSuccessful();
 
-    expect(collect(telegramCalls('setMyCommands')[0]['commands'])->pluck('command')->all())->toBe(['close', 'translate']);
+    expect(collect(telegramCalls('setMyCommands')[0]['commands'])->pluck('command')->all())->toBe(['close', 'translate', 'find']);
 });
 
 describe('DeepL', function () {

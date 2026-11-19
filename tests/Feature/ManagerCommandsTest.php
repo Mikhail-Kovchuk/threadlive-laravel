@@ -1,7 +1,9 @@
 <?php
 
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 use Threadlive\ChatUser;
+use Threadlive\Enums\ConversationStatus;
 use Threadlive\Enums\Direction;
 use Threadlive\Enums\TopicState;
 use Threadlive\Jobs\AnnounceSignIn;
@@ -85,7 +87,7 @@ describe('manager commands', function () {
 
         expect($conversation->messages()->where('direction', Direction::Agent)->count())->toBe(0)
             ->and(telegramCalls('sendMessage')[0]['message_thread_id'])->toBe(300)
-            ->and(telegramCalls('sendMessage')[1]['text'])->toContain('Unknown command /unknown. Try /lookup.');
+            ->and(telegramCalls('sendMessage')[1]['text'])->toContain('Unknown command /unknown. Try /find, /lookup.');
     });
 
     it('leaves commands for other bots alone', function () {
@@ -104,6 +106,7 @@ describe('manager commands', function () {
         expect(telegramCalls('setMyCommands')[0])->toMatchArray([
             'commands' => [
                 ['command' => 'close', 'description' => 'Close this conversation (in its topic)'],
+                ['command' => 'find', 'description' => 'Find a conversation: #number, e-mail, name or words from it'],
                 ['command' => 'lookup', 'description' => 'Look up a record by its code'],
             ],
             'scope' => ['type' => 'chat', 'chat_id' => '-1001234567890'],
@@ -151,8 +154,84 @@ describe('threadlive:make-command', function () {
             ->and($config['enabled'])->toBeFalse();
     });
 
-    it('refuses a name Telegram would not take', function () {
+    it('refuses a name Telegram would not take, or one the package uses', function () {
         $this->artisan('threadlive:make-command', ['name' => 'Close'])->assertFailed();
+        $this->artisan('threadlive:make-command', ['name' => 'find'])->assertFailed();
+    });
+});
+
+describe('/find', function () {
+    /** A conversation in topic 300 + n, with messages. */
+    function found(string $name, ?string $email, array $bodies, array $attributes = []): Conversation
+    {
+        $conversation = Conversation::query()->create([
+            'public_id' => (string) Str::uuid(),
+            'name' => $name,
+            'email' => $email,
+            'telegram_thread_id' => 300 + Conversation::query()->count(),
+            'topic_state' => TopicState::Open,
+            'last_activity_at' => now(),
+            ...$attributes,
+        ]);
+        foreach ($bodies as $body) {
+            $conversation->messages()->create(['direction' => Direction::Visitor, 'body' => $body]);
+        }
+
+        return $conversation;
+    }
+
+    beforeEach(function () {
+        fakeTelegram();
+        config()->set('threadlive.chat_id', '-1001234567890');
+    });
+
+    it('finds by words in the messages, newest first, linked to the topics', function () {
+        $old = found('Anna', 'anna@example.com', ['I would like a refund for the second one, please.'], ['last_activity_at' => now()->subDays(3)]);
+        $new = found('John', null, ['Where is my REFUND?'], ['status' => ConversationStatus::Closed]);
+        found('Maria', null, ['Thanks!']);
+
+        telegramUpdate(['message' => generalMessage('/find refund')]);
+
+        $text = telegramCalls('sendMessage')[0]['text'];
+        expect($text)->toStartWith('<b>🔎 2 conversations for “refund”</b>')
+            ->and($text)->toContain("• John #{$new->id} · ✅ ")
+            ->and($text)->toContain('<a href="https://t.me/c/1234567890/'.$new->telegram_thread_id.'">“Where is my REFUND?”</a>')
+            ->and($text)->toContain("• Anna #{$old->id} · ❗ ")
+            ->and($text)->toContain('“I would like a refund for the second one, please.”')
+            ->and(strpos($text, 'John'))->toBeLessThan(strpos($text, 'Anna'))
+            ->and($text)->not->toContain('Maria');
+    });
+
+    it('finds by number and by e-mail', function () {
+        $anna = found('Anna', 'anna@example.com', ['Hi']);
+        found('John', 'john@example.com', ['Hello']);
+
+        telegramUpdate(['message' => generalMessage("/find #{$anna->id}")]);
+        telegramUpdate(['message' => generalMessage('/find anna@example', 6001)]);
+
+        expect(telegramCalls('sendMessage')[0]['text'])->toStartWith("<b>🔎 Conversation #{$anna->id}</b>\n• Anna #{$anna->id}")
+            ->and(telegramCalls('sendMessage')[0]['text'])->toContain('>open the topic</a>')
+            ->and(telegramCalls('sendMessage')[1]['text'])->toStartWith('<b>🔎 1 conversation for “anna@example”</b>')
+            ->and(telegramCalls('sendMessage')[1]['text'])->not->toContain('John');
+    });
+
+    it('takes % and _ literally, and says when nothing matches', function () {
+        found('Anna', null, ['all good']);
+
+        telegramUpdate(['message' => generalMessage('/find %')]);
+        telegramUpdate(['message' => generalMessage('/find a_l', 6001)]);
+
+        expect(telegramCalls('sendMessage')[0]['text'])->toBe('Nothing found for “%”.')
+            ->and(telegramCalls('sendMessage')[1]['text'])->toBe('Nothing found for “a_l”.');
+    });
+
+    it('works with no app commands at all', function () {
+        config()->set('threadlive.commands', []);
+        found('Anna', null, ['Hi there']);
+
+        telegramUpdate(['message' => generalMessage('/find there')]);
+
+        expect(telegramCalls('sendMessage')[0]['text'])->toStartWith('<b>🔎 1 conversation');
     });
 });
 

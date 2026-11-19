@@ -28,6 +28,7 @@ use Threadlive\Translation\TranslationService;
  *   /close                   → closes the conversation and the topic
  *   an edited reply          → the visitor sees the new text
  *   🙋 Take / ✅ Close        → assign / close
+ *   /find what (anywhere)    → conversations by #number, e-mail, name or words
  *   /name argument (anywhere) → the app's ManagerCommand answers, managers only
  *
  * Anything else — other chats, bots (this one included), the General
@@ -472,7 +473,7 @@ final class UpdateHandler
         }
 
         $name = strtolower($m[1]);
-        if (in_array($name, Commands::RESERVED, true)) {
+        if (in_array($name, Commands::TOPIC_OWN, true)) {
             return false; // the topic's own: /close, /translate
         }
 
@@ -481,9 +482,7 @@ final class UpdateHandler
         if (! array_key_exists($name, $commands)) {
             // "/start@SomeOtherBot" is someone else's; a bare one is ours.
             if (($m[2] ?? '') === '') {
-                $this->replyTo($message, $commands === []
-                    ? 'This bot has no commands besides /close.'
-                    : 'Unknown command /'.e($name).'. Try '.implode(', ', array_map(fn (string $c) => '/'.$c, array_keys($commands))).'.');
+                $this->replyTo($message, 'Unknown command /'.e($name).'. Try '.implode(', ', array_map(fn (string $c) => '/'.$c, array_keys($commands))).'.');
             }
 
             return true;

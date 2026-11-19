@@ -11,12 +11,17 @@ use Threadlive\Contracts\ManagerCommand;
 /** The application's manager commands, from config('threadlive.commands'). */
 final class Commands
 {
-    /** The package's own, handled in the topic: an app's command may not take these names. */
-    public const RESERVED = ['close', 'translate'];
+    /** The package's own: an app's command may not take these names. */
+    public const RESERVED = ['close', 'translate', 'find'];
+
+    /** Of those, the ones that act on the topic they are sent in (UpdateHandler). */
+    public const TOPIC_OWN = ['close', 'translate'];
 
     public function __construct(private readonly Container $container) {}
 
     /**
+     * The package's /find first, then the application's.
+     *
      * @return array<string, ManagerCommand> by name
      *
      * @throws InvalidArgumentException naming the bad entry
@@ -24,7 +29,7 @@ final class Commands
     public function all(): array
     {
         $classes = config('threadlive.commands', []);
-        $commands = [];
+        $commands = ['find' => $this->container->make(FindCommand::class)];
 
         foreach (is_array($classes) ? $classes : [] as $class) {
             $command = is_string($class) && class_exists($class) ? $this->container->make($class) : null;
