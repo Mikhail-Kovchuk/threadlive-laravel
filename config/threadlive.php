@@ -5,95 +5,121 @@ use Threadlive\Host\GuardChatHost;
 /*
  * Threadlive — live chat in Telegram threads.
  *
- * Every scalar here can be set from .env. Publish this file
- * (php artisan vendor:publish --tag=threadlive-config) only to change what
- * .env cannot express, such as the middleware list or the host class.
+ * Change things here, not in vendor/. `php artisan threadlive:config`
+ * creates this file in the application, and after a package update adds the
+ * settings the update brought, leaving the values you changed alone.
+ *
+ * Only what differs between environments, or is secret, comes from .env:
+ * THREADLIVE_ENABLED, THREADLIVE_BOT_TOKEN, THREADLIVE_GROUP_ID,
+ * THREADLIVE_WEBHOOK_SECRET, THREADLIVE_TURNSTILE_SECRET and
+ * THREADLIVE_QUEUE_CONNECTION. Everything else is set below.
  */
 
 return [
+
+    /*
+    |--------------------------------------------------------------------------
+    | Environment (.env)
+    |--------------------------------------------------------------------------
+    */
 
     // Off until the bot and the group are set up. The widget reads this from
     // the bootstrap endpoint and stays hidden while it is false.
     'enabled' => env('THREADLIVE_ENABLED', false),
 
-    /*
-    |--------------------------------------------------------------------------
-    | Telegram
-    |--------------------------------------------------------------------------
-    |
-    | A bot of its own, never one the application already uses: the webhook
-    | this package sets turns getUpdates off for that bot. chat_id is the
-    | forum group (-100…), with Topics on and the bot an admin in it.
-    |
-    */
-
+    // A bot of its own, never one the application already uses: the webhook
+    // this package sets turns getUpdates off for that bot. Use another bot
+    // for each environment.
     'bot_token' => env('THREADLIVE_BOT_TOKEN'),
+
+    // The forum group (-100…), with Topics on and the bot an admin in it.
     'chat_id' => env('THREADLIVE_GROUP_ID'),
+
+    // Telegram sends it back with every update; threadlive:install makes one.
     'webhook_secret' => env('THREADLIVE_WEBHOOK_SECRET'),
 
+    // Cloudflare Turnstile on a visitor's first message; empty = off.
+    'turnstile_secret' => env('THREADLIVE_TURNSTILE_SECRET'),
+
+    // Where sends to Telegram are queued; null = the application's defaults.
+    'queue' => [
+        'connection' => env('THREADLIVE_QUEUE_CONNECTION'),
+        'name' => null,
+    ],
+
     /*
     |--------------------------------------------------------------------------
-    | HTTP
+    | HTTP and users
     |--------------------------------------------------------------------------
-    |
-    | The widget calls {APP_URL}/{route_prefix}/…. When the website and this
-    | API are on different origins, add "{route_prefix}/*" to `paths` in
-    | config/cors.php, or the browser blocks every request.
-    |
-    | guard: the guard that knows the signed-in user (null = the default one).
-    | host: the class that tells the package about your users (implements
-    | Threadlive\Contracts\ChatHost). The default reads the guard and adds
-    | nothing; threadlive:install publishes app/Threadlive/ChatHost.php to
-    | adapt, and points this at it.
-    |
     */
 
-    'route_prefix' => env('THREADLIVE_ROUTE_PREFIX', 'threadlive'),
+    // The widget calls {APP_URL}/{route_prefix}/…. When the website and this
+    // API are on different origins, add "{route_prefix}/*" to `paths` in
+    // config/cors.php, or the browser blocks every request.
+    'route_prefix' => 'threadlive',
+
     'middleware' => ['api'],
-    'guard' => env('THREADLIVE_GUARD'),
+
+    // The guard that knows the signed-in user, e.g. 'api' or 'sanctum'.
+    // null = the application's default guard.
+    'guard' => null,
+
+    // The class that tells the package about your users (implements
+    // Threadlive\Contracts\ChatHost). The default reads the guard and adds
+    // nothing; threadlive:install publishes app/Threadlive/ChatHost.php to
+    // adapt, and points this at it.
     'host' => GuardChatHost::class,
-    'allow_guests' => env('THREADLIVE_ALLOW_GUESTS', true),
+
+    // false: only signed-in users may write.
+    'allow_guests' => true,
 
     /*
     |--------------------------------------------------------------------------
     | Conversation lifecycle
     |--------------------------------------------------------------------------
-    |
-    | A topic closes after close_after_hours without activity and is deleted
-    | from Telegram delete_topic_after_days after that; the conversation stays
-    | in the database for retention_days (0 = forever).
-    |
     */
 
-    'close_after_hours' => (int) env('THREADLIVE_CLOSE_AFTER_HOURS', 24),
-    'delete_topic_after_days' => (int) env('THREADLIVE_DELETE_TOPIC_AFTER_DAYS', 7),
-    'retention_days' => (int) env('THREADLIVE_RETENTION_DAYS', 90),
-    'waiting_alert_minutes' => (int) env('THREADLIVE_WAITING_ALERT_MINUTES', 10),
-    'email_unread_after_minutes' => (int) env('THREADLIVE_EMAIL_UNREAD_AFTER_MINUTES', 15),
+    // A conversation with no activity for this long is closed (✅).
+    'close_after_hours' => 24,
+
+    // A closed topic is deleted from Telegram after this long; the
+    // conversation stays in the database. 0 = never delete.
+    'delete_topic_after_days' => 7,
+
+    // Conversations with no activity for this long are deleted, with their
+    // files. 0 = keep forever.
+    'retention_days' => 90,
+
+    // Within support hours, a visitor waiting this long without a reply gets
+    // a "⏰ … is waiting" post in General, with sound, once. 0 = off.
+    'waiting_alert_minutes' => 10,
+
+    // A reply not read in the widget within this long goes to the visitor's
+    // e-mail, when they left one.
+    'email_unread_after_minutes' => 15,
 
     /*
     |--------------------------------------------------------------------------
-    | Agents
+    | Managers
     |--------------------------------------------------------------------------
-    |
-    | show_agent_name: the visitor sees "Maria · Support" when true, only
-    | agent_display_name when false.
-    |
     */
 
-    /*
-    | Commands for the managers in the support group ("/" menu), each a class
-    | implementing Threadlive\Contracts\ManagerCommand — what they look up is
-    | up to you. php artisan threadlive:make-command Name creates one and
-    | adds it here; run threadlive:setup after changing the list.
-    */
-
+    // Commands for the managers in the support group ("/" menu), each a class
+    // implementing Threadlive\Contracts\ManagerCommand — what they look up is
+    // up to you. php artisan threadlive:make-command Name creates one and
+    // adds it here; run threadlive:setup after changing the list.
     'commands' => [],
 
-    'claim_button' => env('THREADLIVE_CLAIM_BUTTON', true),
-    'assign_on_first_reply' => env('THREADLIVE_ASSIGN_ON_FIRST_REPLY', true),
-    'show_agent_name' => env('THREADLIVE_SHOW_AGENT_NAME', true),
-    'agent_display_name' => env('THREADLIVE_AGENT_DISPLAY_NAME', 'Support'),
+    // The 🙋 Take button on each new topic.
+    'claim_button' => true,
+
+    // The first manager to reply is assigned the conversation.
+    'assign_on_first_reply' => true,
+
+    // true: the visitor sees "Maria · Support"; false: only the name below.
+    'show_agent_name' => true,
+
+    'agent_display_name' => 'Support',
 
     /*
     |--------------------------------------------------------------------------
@@ -101,32 +127,17 @@ return [
     |--------------------------------------------------------------------------
     |
     | Served to the widget by the bootstrap endpoint, so changing them never
-    | needs a frontend release. Outside hours the widget says when the team
-    | is back and asks for an e-mail.
+    | needs a frontend release.
     |
     */
 
+    // Support hours. Outside them the widget says when the team is back and
+    // asks for an e-mail. Equal ends: around the clock.
     'hours' => [
-        'from' => env('THREADLIVE_HOURS_FROM', '09:00'),
-        'to' => env('THREADLIVE_HOURS_TO', '23:00'),
-        'tz' => env('THREADLIVE_HOURS_TZ', 'UTC'),
+        'from' => '09:00',
+        'to' => '23:00',
+        'tz' => 'UTC',
     ],
-
-    // How often the widget asks for new messages. `closed` runs only for a
-    // live conversation (below) and stops once the visitor has been idle for
-    // `idle_after`; with the panel open, idling slows it to `idle`. A hidden
-    // tab never polls.
-    'poll_ms' => [
-        'open' => (int) env('THREADLIVE_POLL_MS_OPEN', 3000),
-        'closed' => (int) env('THREADLIVE_POLL_MS_CLOSED', 30000),
-        'idle' => (int) env('THREADLIVE_POLL_MS_IDLE', 15000),
-        'idle_after' => (int) env('THREADLIVE_POLL_IDLE_AFTER_MS', 300000),
-    ],
-
-    // A conversation is live — worth polling with the panel closed — while it
-    // is not closed and had activity within this many hours. Replies to any
-    // other still arrive with the next page load.
-    'live_hours' => (int) env('THREADLIVE_LIVE_HOURS', 24),
 
     // Buttons on the widget's first screen; pressing one sends it as the
     // visitor's first message. Empty: no buttons.
@@ -136,21 +147,29 @@ return [
         // 'Something else',
     ],
 
-    'max_message_length' => (int) env('THREADLIVE_MAX_MESSAGE_LENGTH', 2000),
+    // How often the widget asks for new messages, in ms. `closed` runs only
+    // for a live conversation (live_hours) and stops once the visitor has
+    // been idle for `idle_after`; with the panel open, idling slows it to
+    // `idle`. A hidden tab never polls.
+    'poll_ms' => [
+        'open' => 3000,
+        'closed' => 30000,
+        'idle' => 15000,
+        'idle_after' => 300000,
+    ],
 
+    // A conversation is live — worth polling with the panel closed — while it
+    // is not closed and had activity within this many hours. Replies to any
+    // other still arrive with the next page load.
+    'live_hours' => 24,
+
+    'max_message_length' => 2000,
+
+    // Screenshots both ways (coming in a later release).
     'attachments' => [
-        'enabled' => env('THREADLIVE_ATTACHMENTS', false),
-        'disk' => env('THREADLIVE_ATTACHMENTS_DISK', 'local'),
-        'max_kb' => (int) env('THREADLIVE_ATTACHMENTS_MAX_KB', 10240),
+        'enabled' => false,
+        'disk' => 'local',
+        'max_kb' => 10240,
     ],
-
-    // Where sends to Telegram are queued; null = the application's defaults.
-    'queue' => [
-        'connection' => env('THREADLIVE_QUEUE_CONNECTION'),
-        'name' => env('THREADLIVE_QUEUE'),
-    ],
-
-    // Cloudflare Turnstile on a visitor's first message; empty = off.
-    'turnstile_secret' => env('THREADLIVE_TURNSTILE_SECRET'),
 
 ];

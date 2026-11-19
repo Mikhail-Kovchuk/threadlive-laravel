@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
+use Threadlive\Console\ConfigCommand;
 use Threadlive\Console\InstallCommand;
 use Threadlive\Console\ListenCommand;
 use Threadlive\Console\MaintainCommand;
@@ -100,6 +101,7 @@ class ThreadliveServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 InstallCommand::class,
+                ConfigCommand::class,
                 ListenCommand::class,
                 MakeCommandCommand::class,
                 SetupCommand::class,

@@ -7,6 +7,7 @@ namespace Threadlive\Console;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Str;
+use Threadlive\Support\ConfigPublisher;
 
 /**
  * Everything after `composer require`, in one command: the config, the
@@ -20,20 +21,21 @@ use Illuminate\Support\Str;
 final class InstallCommand extends Command
 {
     protected $signature = 'threadlive:install
-        {--force : Overwrite config/threadlive.php and app/Threadlive/ChatHost.php}
+        {--force : Overwrite app/Threadlive/ChatHost.php, and start config/threadlive.php over (keeping a .bak)}
         {--no-migrate : Do not offer to run the migration}';
 
     protected $description = 'Publish the Threadlive config, migration and ChatHost class, and add the .env keys';
 
     private const MIGRATION = 'create_threadlive_tables';
 
-    public function handle(Filesystem $files): int
+    public function handle(Filesystem $files, ConfigPublisher $config): int
     {
         $this->components->info('Installing threadlive/threadlive-laravel');
 
-        $this->publishConfig($files);
-        $this->publishMigration($files);
+        // The host class first: the config is pointed at it once it exists.
         $this->publishHost($files);
+        ConfigCommand::report($this, $config->sync((bool) $this->option('force')));
+        $this->publishMigration($files);
         $this->addEnvKeys($files);
 
         $warnings = $this->warnings();
@@ -52,34 +54,14 @@ final class InstallCommand extends Command
             'Create a bot with @BotFather and put its token in THREADLIVE_BOT_TOKEN — a new bot, not one this app already uses.',
             'Create a Telegram group, turn Topics on, add the bot as an admin with "Manage topics", "Delete messages" and "Pin messages", add your team.',
             'Put the group id (-100…) in THREADLIVE_GROUP_ID, then run php artisan threadlive:setup.',
+            'config/threadlive.php: hours, timings, topics, commands — change them there, never in vendor/. '
+                .'After a package update, php artisan threadlive:config adds the new settings.',
             'app/Threadlive/ChatHost.php: who is signed in, card lines for managers, context cards for visitors.',
             'Run a queue worker and the scheduler (php artisan schedule:run every minute).',
             'Set THREADLIVE_ENABLED=true when setup passes.',
         ]);
 
         return self::SUCCESS;
-    }
-
-    private function publishConfig(Filesystem $files): void
-    {
-        $target = config_path('threadlive.php');
-
-        if ($files->exists($target) && ! $this->option('force')) {
-            $this->components->twoColumnDetail('config/threadlive.php', '<fg=yellow>exists, kept</>');
-
-            return;
-        }
-
-        // Pointed at the published host class rather than the package default.
-        $config = str_replace(
-            ["use Threadlive\\Host\\GuardChatHost;\n\n", "'host' => GuardChatHost::class,"],
-            ['', "'host' => App\\Threadlive\\ChatHost::class,"],
-            $files->get(__DIR__.'/../../config/threadlive.php'),
-        );
-
-        $files->ensureDirectoryExists(dirname($target));
-        $files->put($target, $config);
-        $this->components->twoColumnDetail('config/threadlive.php', '<fg=green>published</>');
     }
 
     /**
