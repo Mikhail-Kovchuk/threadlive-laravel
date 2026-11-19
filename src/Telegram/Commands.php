@@ -11,6 +11,9 @@ use Threadlive\Contracts\ManagerCommand;
 /** The application's manager commands, from config('threadlive.commands'). */
 final class Commands
 {
+    /** The package's own, handled in the topic: an app's command may not take these names. */
+    public const RESERVED = ['close', 'translate'];
+
     public function __construct(private readonly Container $container) {}
 
     /**
@@ -34,9 +37,10 @@ final class Commands
 
             $name = $command->name();
 
-            if (preg_match('/^[a-z0-9_]{1,32}$/', $name) !== 1 || $name === 'close') {
+            if (preg_match('/^[a-z0-9_]{1,32}$/', $name) !== 1 || in_array($name, self::RESERVED, true)) {
                 throw new InvalidArgumentException(
-                    "threadlive.commands: {$class} is named “{$name}”; use lowercase letters, digits and _, up to 32, and not “close”."
+                    "threadlive.commands: {$class} is named “{$name}”; use lowercase letters, digits and _, up to 32, "
+                    .'and none of '.implode(', ', self::RESERVED).'.'
                 );
             }
 

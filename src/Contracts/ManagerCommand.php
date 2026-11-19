@@ -17,7 +17,7 @@ use Threadlive\CommandReply;
  */
 interface ManagerCommand
 {
-    /** "/{name}": lowercase letters, digits and _, up to 32; not "close". */
+    /** "/{name}": lowercase letters, digits and _, up to 32; not "close" or "translate" (the package's own). */
     public function name(): string;
 
     /** Shown in the group's menu, and when the bot asks for the argument. */

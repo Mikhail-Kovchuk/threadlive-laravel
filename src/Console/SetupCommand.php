@@ -10,6 +10,7 @@ use Threadlive\Telegram\Commands;
 use Threadlive\Telegram\Dashboard;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
+use Threadlive\Translation\TranslationService;
 
 /**
  * Checks the bot and the group, says exactly what is wrong, and — when
@@ -34,8 +35,12 @@ final class SetupCommand extends Command
 
     private bool $ok = true;
 
-    public function handle(TelegramClient $telegram, Dashboard $dashboard, Commands $commands): int
+    private TranslationService $translation;
+
+    public function handle(TelegramClient $telegram, Dashboard $dashboard, Commands $commands, TranslationService $translation): int
     {
+        $this->translation = $translation;
+
         $bot = $this->bot($telegram);
         if ($bot === null) {
             return self::FAILURE;
@@ -200,6 +205,13 @@ final class SetupCommand extends Command
         }
 
         $menu = [['command' => 'close', 'description' => 'Close this conversation (in its topic)']];
+
+        if ($this->translation->enabled()) {
+            $menu[] = [
+                'command' => 'translate',
+                'description' => 'Translate this conversation: /translate ['.implode('|', $this->translation->languages()).'|off]',
+            ];
+        }
 
         foreach ($all as $name => $command) {
             $description = trim($command->description());

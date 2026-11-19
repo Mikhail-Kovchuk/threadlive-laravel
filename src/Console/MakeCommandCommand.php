@@ -7,6 +7,7 @@ namespace Threadlive\Console;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Str;
+use Threadlive\Telegram\Commands;
 
 /**
  * php artisan threadlive:make-command Invoice
@@ -28,8 +29,9 @@ final class MakeCommandCommand extends Command
         $name = Str::snake($base);
         $class = $base.'Command';
 
-        if ($base === '' || preg_match('/^[a-z0-9_]{1,32}$/', $name) !== 1 || $name === 'close') {
-            $this->components->error("“{$name}” cannot be a Telegram command: lowercase letters, digits and _, up to 32, and not “close”.");
+        if ($base === '' || preg_match('/^[a-z0-9_]{1,32}$/', $name) !== 1 || in_array($name, Commands::RESERVED, true)) {
+            $this->components->error("“{$name}” cannot be a command: lowercase letters, digits and _, up to 32, and none of "
+                .implode(', ', Commands::RESERVED).' (the package\'s own).');
 
             return self::FAILURE;
         }

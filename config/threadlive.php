@@ -11,8 +11,9 @@ use Threadlive\Host\GuardChatHost;
  *
  * Only what differs between environments, or is secret, comes from .env:
  * THREADLIVE_ENABLED, THREADLIVE_BOT_TOKEN, THREADLIVE_GROUP_ID,
- * THREADLIVE_WEBHOOK_SECRET, THREADLIVE_TURNSTILE_SECRET and
- * THREADLIVE_QUEUE_CONNECTION. Everything else is set below.
+ * THREADLIVE_WEBHOOK_SECRET, THREADLIVE_TURNSTILE_SECRET,
+ * THREADLIVE_QUEUE_CONNECTION and THREADLIVE_TRANSLATION_KEY. Everything
+ * else is set below.
  */
 
 return [
@@ -120,6 +121,19 @@ return [
     'show_agent_name' => true,
 
     'agent_display_name' => 'Support',
+
+    // Translation, switched on per conversation with /translate in its topic:
+    // the visitor's messages reach the managers with a translation into
+    // `target`, and the managers' replies reach the visitor in the visitor's
+    // language. driver: 'deepl', a class implementing
+    // Threadlive\Contracts\Translator, or null (off). The key comes from
+    // .env. `languages`: what /translate <language> may switch to.
+    'translation' => [
+        'driver' => null,
+        'key' => env('THREADLIVE_TRANSLATION_KEY'),
+        'target' => 'en',
+        'languages' => ['en', 'ru'],
+    ],
 
     /*
     |--------------------------------------------------------------------------

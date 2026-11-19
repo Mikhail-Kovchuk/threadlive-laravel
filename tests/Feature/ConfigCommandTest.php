@@ -102,5 +102,6 @@ it('keeps .env to what differs between environments, or is secret', function () 
         'THREADLIVE_WEBHOOK_SECRET',
         'THREADLIVE_TURNSTILE_SECRET',
         'THREADLIVE_QUEUE_CONNECTION',
+        'THREADLIVE_TRANSLATION_KEY',
     ]);
 });

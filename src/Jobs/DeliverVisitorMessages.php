@@ -20,6 +20,8 @@ use Threadlive\Models\Message;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
 use Threadlive\Telegram\Topics;
+use Threadlive\Translation\Languages;
+use Threadlive\Translation\TranslationService;
 use Throwable;
 
 /**
@@ -132,6 +134,7 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
             return;
         }
 
+        $this->translate($conversation, $pending);
         $thread = $topics->ensureOpen($conversation);
 
         foreach ($this->batches($pending) as [$messages, $html, $silent]) {
@@ -149,8 +152,45 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
     }
 
     /**
+     * With /translate on, each visitor message gets its translation for the
+     * managers — once: it is kept on the message, so a retry costs nothing.
+     * The detected language is the visitor's, which their replies go out in.
+     *
+     * @param  Collection<int, Message>  $pending
+     */
+    private function translate(Conversation $conversation, Collection $pending): void
+    {
+        $target = $conversation->translate_to;
+        if ($target === null) {
+            return;
+        }
+
+        $translator = app(TranslationService::class);
+
+        foreach ($pending as $message) {
+            if ($message->direction !== Direction::Visitor || $message->translation !== null) {
+                continue;
+            }
+
+            $translation = $translator->translate($message->body, $target);
+            if ($translation === null) {
+                continue;
+            }
+
+            if ($translation->source !== '' && $conversation->visitor_language !== $translation->source) {
+                $conversation->forceFill(['visitor_language' => $translation->source])->save();
+            }
+
+            if (! $translation->isSameLanguage()) {
+                $message->forceFill(['translation' => $translation->toArray()])->save();
+            }
+        }
+    }
+
+    /**
      * Consecutive visitor messages become one Telegram message; a context
      * card is its own, silent one. Only visitor messages make a sound.
+     * Translations follow the originals: "🌐 ES → EN", then the text.
      *
      * @param  Collection<int, Message>  $pending
      * @return list<array{Collection<int, Message>, string, bool}>
@@ -160,14 +200,14 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
         $batches = [];
         /** @var Collection<int, Message> $run */
         $run = new Collection;
-        $text = '';
+        $length = 0;
 
-        $flush = function () use (&$batches, &$run, &$text) {
+        $flush = function () use (&$batches, &$run, &$length) {
             if ($run->isNotEmpty()) {
-                $batches[] = [$run, $text, false];
+                $batches[] = [$run, self::compose($run), false];
             }
             $run = new Collection;
-            $text = '';
+            $length = 0;
         };
 
         foreach ($pending as $message) {
@@ -178,17 +218,36 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
                 continue;
             }
 
-            $part = e($message->body);
-            if ($text !== '' && mb_strlen($text) + mb_strlen($part) + 2 > self::MAX_TEXT) {
+            $size = mb_strlen($message->body) + mb_strlen($message->translation['text'] ?? '') + 4;
+            if ($run->isNotEmpty() && $length + $size > self::MAX_TEXT) {
                 $flush();
             }
 
-            $text = $text === '' ? $part : $text."\n\n".$part;
             $run->push($message);
+            $length += $size;
         }
 
         $flush();
 
         return $batches;
+    }
+
+    /**
+     * @param  Collection<int, Message>  $messages
+     */
+    private static function compose(Collection $messages): string
+    {
+        $originals = $messages->map(fn (Message $m) => e($m->body))->implode("\n\n");
+        $translated = $messages->filter(fn (Message $m) => $m->translation !== null);
+
+        if ($translated->isEmpty()) {
+            return $originals;
+        }
+
+        /** @var array{text: string, from: string, to: string} $first */
+        $first = $translated->first()->translation;
+
+        return $originals."\n\n🌐 <b>".Languages::label($first['from']).' → '.Languages::label($first['to'])."</b>\n"
+            .$translated->map(fn (Message $m) => e($m->translation['text'] ?? ''))->implode("\n\n");
     }
 }

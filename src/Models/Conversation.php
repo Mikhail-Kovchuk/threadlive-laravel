@@ -23,6 +23,8 @@ use Threadlive\Enums\TopicState;
  * @property string|null $email
  * @property string|null $locale
  * @property array<string, mixed>|null $context
+ * @property string|null $translate_to
+ * @property string|null $visitor_language
  * @property int|null $telegram_thread_id
  * @property TopicState $topic_state
  * @property string|null $topic_name

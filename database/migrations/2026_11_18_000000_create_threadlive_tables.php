@@ -26,6 +26,10 @@ return new class extends Migration
             $table->string('email')->nullable();
             $table->string('locale', 16)->nullable();
             $table->json('context')->nullable();
+            // /translate in the topic: the managers' language (null = off),
+            // and the visitor's, as the translator detected it.
+            $table->string('translate_to', 8)->nullable();
+            $table->string('visitor_language', 8)->nullable();
 
             $table->unsignedBigInteger('telegram_thread_id')->nullable()->unique();
             $table->string('topic_state', 16)->default('none');
@@ -55,6 +59,9 @@ return new class extends Migration
             $table->foreignId('conversation_id')->constrained('threadlive_conversations')->cascadeOnDelete();
             $table->string('direction', 16);
             $table->text('body');
+            // {text, from, to}: for the managers (a visitor message) or for the
+            // visitor (a reply). Kept, so nothing is translated twice.
+            $table->json('translation')->nullable();
             $table->json('attachments')->nullable();
             $table->uuid('client_msg_id')->nullable();
             $table->bigInteger('telegram_message_id')->nullable();

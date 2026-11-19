@@ -13,7 +13,10 @@ use Threadlive\Events\AgentReplied;
 use Threadlive\Jobs\RefreshDashboard;
 use Threadlive\Jobs\SyncTopic;
 use Threadlive\Models\Conversation;
+use Threadlive\Models\Message;
 use Threadlive\Support\ConversationActions;
+use Threadlive\Translation\Languages;
+use Threadlive\Translation\TranslationService;
 
 /**
  * One Telegram update: what a manager did in a topic.
@@ -39,6 +42,7 @@ final class UpdateHandler
         private readonly TelegramClient $telegram,
         private readonly Commands $commands,
         private readonly Cache $cache,
+        private readonly TranslationService $translation,
     ) {}
 
     /**
@@ -116,13 +120,103 @@ final class UpdateHandler
             return;
         }
 
-        $this->reply($conversation, $message['message_id'], $trimmed, $from);
+        if (preg_match('/^\/translate(?:@\w+)?(?:\s+([A-Za-z-]+))?$/i', $trimmed, $m) === 1) {
+            $this->toggleTranslation($conversation, $message, strtolower($m[1] ?? ''));
+
+            return;
+        }
+
+        $this->reply($conversation, $message['message_id'], $trimmed, $from, $message);
+    }
+
+    /**
+     * /translate: on with the default language, or off when on.
+     * /translate ru: on, into Russian. /translate off: off.
+     * For this conversation only.
+     *
+     * @param  array<mixed>  $message
+     */
+    private function toggleTranslation(Conversation $conversation, array $message, string $argument): void
+    {
+        if (! $this->translation->enabled()) {
+            $this->replyTo($message, 'Translation is not set up: set threadlive.translation.driver and THREADLIVE_TRANSLATION_KEY.');
+
+            return;
+        }
+
+        if ($argument === 'off' || ($argument === '' && $conversation->translate_to !== null)) {
+            $conversation->forceFill(['translate_to' => null])->save();
+            $this->replyTo($message, '🌐 Translation off for this conversation.');
+
+            return;
+        }
+
+        $target = $argument === '' ? $this->translation->defaultTarget() : Languages::base($argument);
+        $languages = $this->translation->languages();
+
+        if (! in_array($target, $languages, true)) {
+            $this->replyTo($message, 'Choose one of: '.implode(', ', $languages).' — or /translate off.');
+
+            return;
+        }
+
+        $conversation->forceFill(['translate_to' => $target])->save();
+
+        // What the visitor wrote last, translated now: it tells their
+        // language, and the managers what they missed.
+        $last = $conversation->messages()->where('direction', Direction::Visitor)->latest('id')->first();
+        $translation = $last === null ? null : $this->translation->translate($last->body, $target);
+
+        if ($translation !== null && $translation->source !== '') {
+            $conversation->forceFill(['visitor_language' => $translation->source])->save();
+        }
+
+        $lines = ['🌐 Translation on: the visitor\'s messages come with a translation into <b>'.Languages::label($target).'</b>.'];
+        $lines[] = $conversation->visitor_language !== null
+            ? 'Your replies go out in <b>'.Languages::label($conversation->visitor_language).'</b>.'
+            : 'Your replies go out in the visitor\'s language once they write.';
+
+        if ($translation !== null && ! $translation->isSameLanguage()) {
+            $lines[] = '';
+            $lines[] = 'Their last message: <i>'.e($translation->text).'</i>';
+        }
+
+        $this->replyTo($message, implode("\n", $lines));
+    }
+
+    /**
+     * With /translate on, the visitor gets the reply in their language, and
+     * the topic a silent "🌐 → ES: …" under the reply, so the manager sees
+     * what went out. Without a translation (off, failed, same language) the
+     * reply goes as written.
+     *
+     * @param  array<mixed>  $telegramMessage
+     */
+    private function translateReply(Conversation $conversation, Message $reply, array $telegramMessage): void
+    {
+        $language = $conversation->visitor_language;
+
+        if ($conversation->translate_to === null || $language === null) {
+            return;
+        }
+
+        $translation = $this->translation->translate($reply->body, $language);
+
+        if ($translation === null || $translation->isSameLanguage()) {
+            $reply->forceFill(['translation' => null])->save();
+
+            return;
+        }
+
+        $reply->forceFill(['translation' => $translation->toArray()])->save();
+        $this->replyTo($telegramMessage, '🌐 → '.Languages::label($language).': '.e($translation->text));
     }
 
     /**
      * @param  array<mixed>  $from
+     * @param  array<mixed>  $telegramMessage
      */
-    private function reply(Conversation $conversation, int $telegramMessageId, string $text, array $from): void
+    private function reply(Conversation $conversation, int $telegramMessageId, string $text, array $from, array $telegramMessage): void
     {
         $name = $this->name($from);
 
@@ -148,6 +242,8 @@ final class UpdateHandler
             'unread_email_sent_at' => null,
         ])->save();
 
+        $this->translateReply($conversation, $message, $telegramMessage);
+
         SyncTopic::dispatch($conversation->id);
         RefreshDashboard::dispatch();
         event(new AgentReplied($conversation, $message));
@@ -160,9 +256,22 @@ final class UpdateHandler
             ->whereIn('direction', [Direction::Agent, Direction::Note])
             ->first();
 
+        if ($message === null) {
+            return;
+        }
+
         // Turning a reply into a note (or back) after the fact is not a thing:
-        // the visitor may already have read it. Only the text changes.
-        $message?->forceFill(['body' => trim($text), 'edited_at' => now()])->save();
+        // the visitor may already have read it. Only the text changes — and
+        // its translation, quietly, when there is one to keep up to date.
+        $message->forceFill(['body' => trim($text), 'edited_at' => now()])->save();
+
+        $language = $conversation->visitor_language;
+        if ($message->direction === Direction::Agent && $conversation->translate_to !== null && $language !== null) {
+            $translation = $this->translation->translate($message->body, $language);
+            $message->forceFill([
+                'translation' => $translation === null || $translation->isSameLanguage() ? null : $translation->toArray(),
+            ])->save();
+        }
     }
 
     private function close(Conversation $conversation): void
@@ -283,8 +392,8 @@ final class UpdateHandler
         }
 
         $name = strtolower($m[1]);
-        if ($name === 'close') {
-            return false;
+        if (in_array($name, Commands::RESERVED, true)) {
+            return false; // the topic's own: /close, /translate
         }
 
         $commands = array_map(fn (ManagerCommand $c) => $c->description(), $all = $this->commands->all());

@@ -354,10 +354,16 @@ final class VisitorController
      */
     private function messageJson(Message $message): array
     {
+        // A reply translated for the visitor (/translate) reaches them in
+        // their language; the manager's original stays in the topic.
+        $body = $message->direction === Direction::Agent && is_string($message->translation['text'] ?? null)
+            ? $message->translation['text']
+            : $message->body;
+
         $json = [
             'id' => $message->id,
             'direction' => $message->direction->value,
-            'body' => $message->body,
+            'body' => $body,
             'created_at' => $message->created_at?->toIso8601ZuluString('millisecond'),
             'author' => $message->direction === Direction::Agent && config('threadlive.show_agent_name', true)
                 ? $message->agent_name

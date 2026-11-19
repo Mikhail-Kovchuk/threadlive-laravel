@@ -15,6 +15,7 @@ use Threadlive\Enums\Direction;
  * @property int $conversation_id
  * @property Direction $direction
  * @property string $body
+ * @property array{text: string, from: string, to: string}|null $translation
  * @property array<int, array<string, mixed>>|null $attachments
  * @property string|null $client_msg_id
  * @property int|null $telegram_message_id
@@ -38,6 +39,7 @@ class Message extends Model
             'direction' => Direction::class,
             'delivery' => Delivery::class,
             'attachments' => 'array',
+            'translation' => 'array',
             'telegram_message_id' => 'integer',
             'telegram_from_id' => 'integer',
             'edited_at' => 'datetime',
