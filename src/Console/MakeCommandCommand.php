@@ -75,9 +75,15 @@ final class MakeCommandCommand extends Command
         $contents = $files->get($config);
         $entry = "        {$fqcn},\n";
 
-        $updated = preg_replace("/'commands' => \\[\\],/", "'commands' => [\n{$entry}    ],", $contents, 1, $count);
+        $replacementEntry = str_replace('\\', '\\\\', $entry);
+
+        $updated = preg_replace("/'commands' => \\[\\],/", "'commands' => [\n{$replacementEntry}    ],", $contents, 1, $count);
         if ($count === 0) {
-            $updated = preg_replace("/('commands' => \\[\\n)/", '$1'.str_replace('\\', '\\\\', $entry), $contents, 1, $count);
+            $updated = preg_replace("/('commands' => \\[\\n)/", '$1'.$replacementEntry, $contents, 1, $count);
+        }
+        if ($count === 0 && ! str_contains($contents, "'commands' =>")) {
+            // Published before the package had commands: add the key at the end.
+            $updated = preg_replace('/\\n\\];\\s*$/', "\n    'commands' => [\n{$replacementEntry}    ],\n\n];\n", $contents, 1, $count);
         }
 
         if ($count === 0 || ! is_string($updated)) {

@@ -141,6 +141,16 @@ describe('threadlive:make-command', function () {
             );
     });
 
+    it('adds the commands key to a config published before there was one', function () {
+        file_put_contents(config_path('threadlive.php'), "<?php\n\nreturn [\n\n    'enabled' => false,\n\n];\n");
+
+        $this->artisan('threadlive:make-command', ['name' => 'Invoice'])->assertSuccessful();
+
+        $config = require config_path('threadlive.php');
+        expect($config['commands'])->toBe(['App\\Threadlive\\Commands\\InvoiceCommand'])
+            ->and($config['enabled'])->toBeFalse();
+    });
+
     it('refuses a name Telegram would not take', function () {
         $this->artisan('threadlive:make-command', ['name' => 'Close'])->assertFailed();
     });
