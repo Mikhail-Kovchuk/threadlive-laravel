@@ -1,0 +1,3 @@
+# For tools that boot the package in a bare app (Larastan checks view names there).
+providers:
+  - Threadlive\ThreadliveServiceProvider

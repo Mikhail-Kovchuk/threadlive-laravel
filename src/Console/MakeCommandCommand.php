@@ -23,8 +23,7 @@ final class MakeCommandCommand extends Command
 
     public function handle(Filesystem $files): int
     {
-        $argument = $this->argument('name');
-        $base = Str::studly(is_string($argument) ? $argument : '');
+        $base = Str::studly($this->argument('name'));
         $base = Str::endsWith($base, 'Command') ? Str::beforeLast($base, 'Command') : $base;
         $name = Str::snake($base);
         $class = $base.'Command';

@@ -5,14 +5,19 @@ declare(strict_types=1);
 namespace Threadlive\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 use Threadlive\Enums\ConversationStatus;
+use Threadlive\Enums\Direction;
 use Threadlive\Enums\TopicState;
+use Threadlive\Mail\UnreadReplies;
 use Threadlive\Models\Conversation;
 use Threadlive\Support\ConversationActions;
 use Threadlive\Support\WorkingHours;
 use Threadlive\Telegram\Dashboard;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
+use Throwable;
 
 /**
  * Every five minutes (the service provider schedules it):
@@ -21,6 +26,7 @@ use Threadlive\Telegram\TelegramException;
  *   - deletes topics closed for `delete_topic_after_days` (history stays here);
  *   - within support hours, posts "⏰ Anna is waiting 12 min" in General,
  *     with sound, once per wait, after `waiting_alert_minutes`;
+ *   - e-mails replies not read in the widget after `email_unread_after_minutes`;
  *   - refreshes the dashboard.
  */
 final class MaintainCommand extends Command
@@ -31,6 +37,9 @@ final class MaintainCommand extends Command
 
     /** Telegram's group rate limit is shared with real messages: a few alerts per run. */
     private const ALERTS_PER_RUN = 5;
+
+    /** The rest wait for the next run. */
+    private const EMAILS_PER_RUN = 50;
 
     public function handle(TelegramClient $telegram, Dashboard $dashboard): int
     {
@@ -43,9 +52,10 @@ final class MaintainCommand extends Command
         $closed = $this->closeIdle();
         $deleted = $this->deleteOldTopics($telegram);
         $alerts = $this->waitingAlerts($telegram);
+        $emails = $this->unreadEmails();
         $dashboard->refresh();
 
-        $this->components->info("Closed {$closed}, deleted {$deleted} topics, sent {$alerts} waiting alerts.");
+        $this->components->info("Closed {$closed}, deleted {$deleted} topics, sent {$alerts} waiting alerts and {$emails} e-mails.");
 
         return self::SUCCESS;
     }
@@ -137,5 +147,65 @@ final class MaintainCommand extends Command
         }
 
         return $sent;
+    }
+
+    /**
+     * Replies not read in the widget for `email_unread_after_minutes` go to
+     * the visitor's e-mail, once per batch: the next reply starts the clock
+     * again (UpdateHandler clears unread_email_sent_at). Replies older than
+     * a day are left alone — no flood of old ones on the first run.
+     */
+    private function unreadEmails(): int
+    {
+        $minutes = (int) config('threadlive.email_unread_after_minutes', 15);
+        if ($minutes <= 0) {
+            return 0;
+        }
+
+        $due = Conversation::query()
+            ->whereNotNull('email')
+            ->where('email', '!=', '')
+            ->whereNull('unread_email_sent_at')
+            ->where('last_agent_message_at', '<=', now()->subMinutes($minutes))
+            ->where('last_agent_message_at', '>=', now()->subDay())
+            ->orderBy('last_agent_message_at')
+            ->limit(self::EMAILS_PER_RUN)
+            ->get();
+
+        $sent = 0;
+        foreach ($due as $conversation) {
+            $replies = $conversation->messages()
+                ->where('direction', Direction::Agent)
+                ->where('id', '>', $conversation->visitor_read_message_id ?? 0)
+                ->orderBy('id')
+                ->get();
+
+            // Marked first: a mailer that fails tries no more for this batch,
+            // rather than every five minutes.
+            $conversation->forceFill(['unread_email_sent_at' => now()])->save();
+
+            if ($replies->isEmpty()) {
+                continue; // read in the widget in time
+            }
+
+            try {
+                Mail::to((string) $conversation->email)
+                    ->locale(self::locale($conversation))
+                    ->send(new UnreadReplies($conversation, $replies));
+                $sent++;
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
+
+        return $sent;
+    }
+
+    /** The visitor's language as far as we know it: what they write in, or their browser's. */
+    private static function locale(Conversation $conversation): ?string
+    {
+        $locale = $conversation->visitor_language ?? $conversation->locale;
+
+        return is_string($locale) && $locale !== '' ? strtolower(Str::before(str_replace('-', '_', $locale), '_')) : null;
     }
 }

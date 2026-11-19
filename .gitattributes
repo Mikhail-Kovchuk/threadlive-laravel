@@ -5,3 +5,4 @@
 /phpstan.neon.dist export-ignore
 /pint.json export-ignore
 /.gitattributes export-ignore
+/testbench.yaml export-ignore

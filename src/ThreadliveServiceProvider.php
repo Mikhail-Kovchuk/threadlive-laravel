@@ -71,6 +71,7 @@ class ThreadliveServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadRoutesFrom(__DIR__.'/../routes/threadlive.php');
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'threadlive');
 
         RateLimiter::for('threadlive', function (Request $request) {
             $token = $request->header('X-Threadlive-Token');
@@ -116,6 +117,11 @@ class ThreadliveServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../config/threadlive.php' => config_path('threadlive.php'),
             ], 'threadlive-config');
+
+            // The offline e-mail, to reword or restyle.
+            $this->publishes([
+                __DIR__.'/../resources/views' => resource_path('views/vendor/threadlive'),
+            ], 'threadlive-views');
 
             // Published, never loaded from vendor/: the tables are the
             // application's, and a migration run from here would change

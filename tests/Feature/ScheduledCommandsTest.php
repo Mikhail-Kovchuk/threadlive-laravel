@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -9,6 +10,7 @@ use Threadlive\Enums\Delivery;
 use Threadlive\Enums\Direction;
 use Threadlive\Enums\TopicState;
 use Threadlive\Jobs\DeliverVisitorMessages;
+use Threadlive\Mail\UnreadReplies;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
 use Threadlive\Telegram\Dashboard;
@@ -128,6 +130,96 @@ it('lists what could not be delivered on the dashboard, and sends it again on re
     expect(app(Dashboard::class)->html())->not->toContain('Not delivered');
 
     $this->artisan('threadlive:retry-failed')->expectsOutputToContain('Nothing failed');
+});
+
+describe('offline e-mail', function () {
+    beforeEach(fn () => Mail::fake());
+
+    function answered(array $attributes = []): Conversation
+    {
+        $conversation = conversation([
+            'status' => ConversationStatus::Answered,
+            'email' => 'anna@example.com',
+            'last_agent_message_at' => now()->subMinutes(20),
+            ...$attributes,
+        ]);
+        $conversation->messages()->create(['direction' => Direction::Visitor, 'body' => 'Hi']);
+
+        return $conversation;
+    }
+
+    it('sends the unread replies once, as the visitor would see them, with the site link', function () {
+        config()->set('threadlive.email_link', 'https://example.com');
+        $conversation = answered(['context' => ['url' => 'https://example.com/records/7'], 'visitor_language' => 'es']);
+        $read = $conversation->messages()->create(['direction' => Direction::Agent, 'body' => 'Already seen', 'agent_name' => 'Maria']);
+        $conversation->forceFill(['visitor_read_message_id' => $read->id])->save();
+        $conversation->messages()->create([
+            'direction' => Direction::Agent,
+            'body' => 'Your record is ready.',
+            'agent_name' => 'Maria',
+            'translation' => ['text' => 'Su registro está listo.', 'from' => 'en', 'to' => 'es'],
+            'attachments' => [['id' => 'f1', 'disk' => 'local', 'path' => 'x', 'name' => 'record.pdf', 'mime' => 'application/pdf', 'size' => 3]],
+        ]);
+
+        $this->artisan('threadlive:maintain')->expectsOutputToContain('1 e-mails')->assertSuccessful();
+        $this->artisan('threadlive:maintain')->assertSuccessful();
+
+        Mail::assertSent(UnreadReplies::class, 1);
+        Mail::assertSent(UnreadReplies::class, function (UnreadReplies $mail) {
+            $html = $mail->render();
+
+            return $mail->hasTo('anna@example.com')
+                && $mail->locale === 'es'
+                && $mail->replies->count() === 1
+                && str_contains($html, 'Su registro está listo.')
+                && ! str_contains($html, 'Already seen')
+                && str_contains($html, 'Maria')
+                && str_contains($html, 'record.pdf')
+                && str_contains($html, 'href="http://localhost/threadlive/files/')
+                && str_contains($html, 'href="https://example.com/records/7"');
+        });
+    });
+
+    it('never links a page on another host', function () {
+        config()->set('threadlive.email_link', 'https://example.com');
+        $conversation = answered(['context' => ['url' => 'https://evil.example.net/login']]);
+        $conversation->messages()->create(['direction' => Direction::Agent, 'body' => 'Hello']);
+
+        $this->artisan('threadlive:maintain')->assertSuccessful();
+
+        Mail::assertSent(UnreadReplies::class, fn (UnreadReplies $mail) => str_contains($mail->render(), 'href="https://example.com"')
+            && ! str_contains($mail->render(), 'evil'));
+    });
+
+    it('waits, skips what was read, and starts again with the next reply', function () {
+        $soon = answered(['last_agent_message_at' => now()->subMinutes(5)]);
+        $soon->messages()->create(['direction' => Direction::Agent, 'body' => 'Too soon']);
+        $read = answered();
+        $reply = $read->messages()->create(['direction' => Direction::Agent, 'body' => 'Seen']);
+        $read->forceFill(['visitor_read_message_id' => $reply->id])->save();
+        $noEmail = answered(['email' => null]);
+        $noEmail->messages()->create(['direction' => Direction::Agent, 'body' => 'Nowhere to send']);
+
+        $this->artisan('threadlive:maintain')->assertSuccessful();
+        Mail::assertNothingSent();
+
+        // A manager answers again in the topic: a new batch.
+        telegramUpdate(['message' => managerMessage($read->telegram_thread_id, 'One more thing')]);
+        expect($read->refresh()->unread_email_sent_at)->toBeNull();
+        $this->travel(16)->minutes();
+
+        $this->artisan('threadlive:maintain')->assertSuccessful();
+        Mail::assertSent(UnreadReplies::class, fn (UnreadReplies $mail) => $mail->replies->pluck('body')->all() === ['One more thing']);
+    });
+
+    it('is off at 0', function () {
+        config()->set('threadlive.email_unread_after_minutes', 0);
+        answered()->messages()->create(['direction' => Direction::Agent, 'body' => 'Hello']);
+
+        $this->artisan('threadlive:maintain')->assertSuccessful();
+
+        Mail::assertNothingSent();
+    });
 });
 
 it('does nothing while Threadlive is off', function () {

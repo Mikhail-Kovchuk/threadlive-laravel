@@ -96,8 +96,16 @@ return [
     'waiting_alert_minutes' => 10,
 
     // A reply not read in the widget within this long goes to the visitor's
-    // e-mail, when they left one.
+    // e-mail, when they left one (or the signed-in user has one) — once per
+    // batch of replies, through the app's mailer (MAIL_* in .env). 0 = off.
+    // The text: php artisan vendor:publish --tag=threadlive-views; its
+    // strings go through __(), so lang/{locale}.json translates them.
     'email_unread_after_minutes' => 15,
+
+    // The e-mail's "Continue the conversation" button: your site, where the
+    // chat is — e.g. 'https://example.com'. The visitor's own page is used
+    // instead when it is on the same host. null: no button.
+    'email_link' => null,
 
     /*
     |--------------------------------------------------------------------------
