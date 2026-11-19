@@ -11,9 +11,9 @@ use Threadlive\Host\GuardChatHost;
  *
  * Only what differs between environments, or is secret, comes from .env:
  * THREADLIVE_ENABLED, THREADLIVE_BOT_TOKEN, THREADLIVE_GROUP_ID,
- * THREADLIVE_WEBHOOK_SECRET, THREADLIVE_TURNSTILE_SECRET,
- * THREADLIVE_QUEUE_CONNECTION and THREADLIVE_TRANSLATION_KEY. Everything
- * else is set below.
+ * THREADLIVE_WEBHOOK_SECRET, THREADLIVE_TURNSTILE_SITE_KEY,
+ * THREADLIVE_TURNSTILE_SECRET, THREADLIVE_QUEUE_CONNECTION and
+ * THREADLIVE_TRANSLATION_KEY. Everything else is set below.
  */
 
 return [
@@ -39,7 +39,14 @@ return [
     // Telegram sends it back with every update; threadlive:install makes one.
     'webhook_secret' => env('THREADLIVE_WEBHOOK_SECRET'),
 
-    // Cloudflare Turnstile on a visitor's first message; empty = off.
+    // Cloudflare Turnstile on a guest's first message: both keys from the
+    // Cloudflare dashboard (Turnstile → Add widget, your site's domains);
+    // either empty = off. The widget loads Cloudflare's script for it: a
+    // Content-Security-Policy must allow https://challenges.cloudflare.com
+    // in script-src and frame-src.
+    'turnstile_site_key' => env('THREADLIVE_TURNSTILE_SITE_KEY'),
+
+    // The pair's secret key: it stays on the server.
     'turnstile_secret' => env('THREADLIVE_TURNSTILE_SECRET'),
 
     // Where sends to Telegram are queued; null = the application's defaults.

@@ -112,6 +112,8 @@ it('keeps .env to what differs between environments, or is secret', function () 
         'THREADLIVE_BOT_TOKEN',
         'THREADLIVE_GROUP_ID',
         'THREADLIVE_WEBHOOK_SECRET',
+        // Test keys in development, the real pair in production.
+        'THREADLIVE_TURNSTILE_SITE_KEY',
         'THREADLIVE_TURNSTILE_SECRET',
         'THREADLIVE_QUEUE_CONNECTION',
         'THREADLIVE_TRANSLATION_KEY',

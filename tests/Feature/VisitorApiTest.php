@@ -30,6 +30,7 @@ describe('bootstrap', function () {
                 'accept' => ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'],
             ],
             'agent_display_name' => 'Support',
+            'turnstile_site_key' => null,
             'conversation' => null,
         ]);
     });

@@ -12,6 +12,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Threadlive\Contracts\ChatHost;
 use Threadlive\Enums\ConversationStatus;
 use Threadlive\Enums\Delivery;
@@ -21,6 +22,7 @@ use Threadlive\Events\VisitorMessageReceived;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
 use Threadlive\Support\Attachments;
+use Threadlive\Support\Turnstile;
 use Threadlive\Support\Visitor;
 use Threadlive\Support\WorkingHours;
 
@@ -37,6 +39,8 @@ final class VisitorController
 
     /** The most a full-history request returns. */
     private const HISTORY_LIMIT = 500;
+
+    private const TURNSTILE_FAILED = 'We could not check that you are not a robot. Try sending again.';
 
     public function __construct(private readonly ChatHost $host) {}
 
@@ -70,6 +74,10 @@ final class VisitorController
                 'accept' => Attachments::accept(),
             ],
             'agent_display_name' => (string) config('threadlive.agent_display_name', 'Support'),
+            // Only for whom store() checks: a guest with no conversation yet.
+            'turnstile_site_key' => Turnstile::enabled() && $visitor->user === null && $visitor->conversation === null
+                ? Turnstile::siteKey()
+                : null,
             'conversation' => $visitor->conversation ? $this->conversationJson($visitor->conversation) : null,
         ]);
     }
@@ -116,7 +124,9 @@ final class VisitorController
             'files' => ['nullable', 'array', 'max:'.Attachments::maxFiles()],
             // mimes: judged by the content, not by the name.
             'files.*' => ['file', 'max:'.Attachments::maxKb(), 'mimes:'.implode(',', Attachments::types())],
+            'turnstile_token' => ['nullable', 'string', 'max:2048'],
         ], [
+            'turnstile_token.*' => self::TURNSTILE_FAILED,
             'body.required_without' => 'Write a message first.',
             'body.max' => 'The message may not be longer than :max characters.',
             'client_msg_id.*' => 'The message could not be sent. Reload the page and try again.',
@@ -154,6 +164,11 @@ final class VisitorController
                 abort(429, 'Too many new conversations from here. Try again in a few minutes.');
             }
             RateLimiter::hit($key, self::START_WINDOW_SECONDS);
+
+            if ($visitor->user === null && Turnstile::enabled()
+                && ! Turnstile::verify(is_string($data['turnstile_token'] ?? null) ? $data['turnstile_token'] : null, $request->ip())) {
+                throw ValidationException::withMessages(['turnstile_token' => self::TURNSTILE_FAILED]);
+            }
         }
 
         // Asked here, while there is a request: the topic is posted to later,
