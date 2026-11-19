@@ -21,17 +21,9 @@
             "name": "Mikhail Kovchuk"
         }
     ],
-    "//": "No version field: installed from the threadlive-laravel mirror, where the git tag is the version. A field here that disagreed with the tag would make composer skip that release with only a warning.",
     "require": {
         "php": "^8.3",
-        "illuminate/console": "^12.0|^13.0",
-        "illuminate/contracts": "^12.0|^13.0",
-        "illuminate/database": "^12.0|^13.0",
-        "illuminate/filesystem": "^12.0|^13.0",
-        "illuminate/http": "^12.0|^13.0",
-        "illuminate/queue": "^12.0|^13.0",
-        "illuminate/routing": "^12.0|^13.0",
-        "illuminate/support": "^12.0|^13.0"
+        "laravel/framework": "^12.0|^13.0"
     },
     "require-dev": {
         "larastan/larastan": "^3.0",
@@ -62,7 +54,6 @@
         "lint": "pint --test",
         "format": "pint"
     },
-    "//config": "platform.php pins dependency resolution to the lowest PHP we support, whatever PHP runs composer. Without it, a developer on 8.4 would lock packages that need 8.4 and never notice; with it, composer refuses them.",
     "config": {
         "platform": {
             "php": "8.3.0"
