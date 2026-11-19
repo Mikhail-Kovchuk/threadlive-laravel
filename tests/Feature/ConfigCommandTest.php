@@ -1,6 +1,7 @@
 <?php
 
 use Threadlive\Host\GuardChatHost;
+use Threadlive\Support\Attachments;
 use Threadlive\Support\ConfigPublisher;
 
 beforeEach(fn () => cleanInstall());
@@ -63,6 +64,17 @@ it('adds only the settings a package update brought, keeping the values changed'
         ->and($source)->toContain('// Changed by the application.');
 
     $this->artisan('threadlive:config')->expectsOutputToContain('up to date, kept')->assertSuccessful();
+});
+
+it('names settings missing inside a group, and the package uses its defaults meanwhile', function () {
+    file_put_contents(config_path('threadlive.php'), "<?php\n\nreturn ['attachments' => ['enabled' => true, 'disk' => 'local']];\n");
+    config()->set('threadlive.attachments', ['enabled' => true, 'disk' => 'local']);
+
+    $this->artisan('threadlive:config')
+        ->expectsOutputToContain('attachments.max_kb, attachments.max_files, attachments.types')
+        ->assertSuccessful();
+
+    expect(Attachments::types())->toBe(['png', 'jpg', 'jpeg', 'webp', 'gif', 'pdf']);
 });
 
 it('starts over with --force, keeping the old file', function () {

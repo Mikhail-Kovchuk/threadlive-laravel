@@ -64,12 +64,15 @@ final class Attachments
         return max(1, (int) config('threadlive.attachments.max_files', 5));
     }
 
+    /** When a config published by an older version has no `types` yet. */
+    private const DEFAULT_TYPES = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'pdf'];
+
     /**
      * @return list<string> lowercase extensions
      */
     public static function types(): array
     {
-        $types = config('threadlive.attachments.types', []);
+        $types = config('threadlive.attachments.types', self::DEFAULT_TYPES);
 
         return array_values(array_unique(array_map(
             fn (string $type) => strtolower(ltrim($type, '.')),

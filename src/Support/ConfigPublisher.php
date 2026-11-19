@@ -19,12 +19,38 @@ final class ConfigPublisher
     public function __construct(private readonly Filesystem $files) {}
 
     /**
-     * @return array{status: 'published'|'updated'|'current'|'failed', added: list<string>, unknown: list<string>, backup: string|null, error: string|null}
+     * Settings inside a group (attachments.types) that the published file
+     * lacks. Not written in: editing inside someone's array is where a file
+     * gets broken. Named, so they can be copied by hand; the package uses
+     * its defaults for them meanwhile.
+     *
+     * @param  array<mixed>  $values
+     * @return list<string>
+     */
+    private function missingNested(array $values): array
+    {
+        $defaults = $this->load($this->files->get(self::SOURCE)) ?? [];
+        $missing = [];
+
+        foreach ($defaults as $key => $default) {
+            if (! is_array($default) || array_is_list($default) || ! is_array($values[$key] ?? null)) {
+                continue;
+            }
+            foreach (array_keys(array_diff_key($default, $values[$key])) as $nested) {
+                $missing[] = "{$key}.{$nested}";
+            }
+        }
+
+        return $missing;
+    }
+
+    /**
+     * @return array{status: 'published'|'updated'|'current'|'failed', added: list<string>, unknown: list<string>, nested: list<string>, backup: string|null, error: string|null}
      */
     public function sync(bool $force = false): array
     {
         $target = config_path('threadlive.php');
-        $result = ['status' => 'current', 'added' => [], 'unknown' => [], 'backup' => null, 'error' => null];
+        $result = ['status' => 'current', 'added' => [], 'unknown' => [], 'nested' => [], 'backup' => null, 'error' => null];
 
         if (! $this->files->exists($target) || $force) {
             if ($this->files->exists($target)) {
@@ -48,6 +74,7 @@ final class ConfigPublisher
         $blocks = self::blocks($this->packageSource(forAppending: true));
         $missing = array_diff_key($blocks, $values);
         $result['unknown'] = array_map('strval', array_keys(array_diff_key($values, $blocks)));
+        $result['nested'] = $this->missingNested($values);
 
         if ($missing === []) {
             return $result;

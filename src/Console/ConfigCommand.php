@@ -29,7 +29,7 @@ final class ConfigCommand extends Command
     /**
      * Shared with threadlive:install.
      *
-     * @param  array{status: string, added: list<string>, unknown: list<string>, backup: string|null, error: string|null}  $result
+     * @param  array{status: string, added: list<string>, unknown: list<string>, nested?: list<string>, backup: string|null, error: string|null}  $result
      */
     public static function report(Command $command, array $result): bool
     {
@@ -44,6 +44,11 @@ final class ConfigCommand extends Command
 
         if ($result['backup'] !== null) {
             $components->twoColumnDetail('config/threadlive.php.bak', 'the previous file');
+        }
+
+        if (($result['nested'] ?? []) !== []) {
+            $components->warn('Missing inside a group (the package uses its defaults until you add them; copy them from '
+                .'vendor/threadlive/threadlive-laravel/config/threadlive.php): '.implode(', ', $result['nested']).'.');
         }
 
         if ($result['unknown'] !== []) {
