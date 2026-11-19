@@ -7,7 +7,9 @@ namespace Threadlive\Console;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Threadlive\Enums\ConversationStatus;
+use Threadlive\Enums\Delivery;
 use Threadlive\Models\Conversation;
+use Threadlive\Models\Message;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
 
@@ -43,6 +45,12 @@ final class StatusCommand extends Command
         foreach (ConversationStatus::cases() as $status) {
             $this->components->twoColumnDetail(ucfirst($status->value), (string) Conversation::query()->where('status', $status)->count());
         }
+
+        $failed = Message::query()->where('delivery', Delivery::Failed)->count();
+        $this->components->twoColumnDetail(
+            'Not delivered to Telegram',
+            $failed === 0 ? '0' : "<fg=red>{$failed}</> — php artisan threadlive:retry-failed",
+        );
 
         return self::SUCCESS;
     }

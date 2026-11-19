@@ -7,6 +7,7 @@ namespace Threadlive\Telegram;
 use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Support\Carbon;
 use Threadlive\Enums\ConversationStatus;
+use Threadlive\Enums\Delivery;
 use Threadlive\Models\Conversation;
 use Threadlive\Support\WorkingHours;
 
@@ -109,13 +110,47 @@ final class Dashboard
             ->where('closed_at', '>=', $now->copy()->startOfDay()->utc())
             ->count();
 
-        return implode("\n", [
+        return implode("\n", array_filter([
             '📊 <b>Support</b> · updated '.$now->format('H:i'),
             '',
             "❗ Waiting for a reply ({$waiting->count()})".($shown !== '' ? ': '.$shown : ''),
             "💬 In progress ({$answered})".($inProgress !== '' ? ': '.$inProgress : ''),
             "✅ Closed today: {$closedToday}",
-        ]);
+            $this->notDelivered(),
+        ], fn (?string $line) => $line !== null));
+    }
+
+    /**
+     * "⚠️ Not delivered (3): Anna — 2, John — 1": visitor messages the
+     * delivery job gave up on. Only shown when there are any.
+     */
+    private function notDelivered(): ?string
+    {
+        $failed = Conversation::query()
+            ->whereHas('messages', fn ($q) => $q->where('delivery', Delivery::Failed))
+            ->withCount(['messages as failed_count' => fn ($q) => $q->where('delivery', Delivery::Failed)])
+            ->orderBy('id')
+            ->get();
+
+        if ($failed->isEmpty()) {
+            return null;
+        }
+
+        $total = (int) $failed->sum('failed_count');
+        $shown = $failed->take(self::WAITING_SHOWN)->map(function (Conversation $c) {
+            $name = e($c->name ?: 'Guest').' #'.$c->id;
+            $link = self::topicLink($c);
+            $label = $link ? '<a href="'.e($link).'">'.$name.'</a>' : $name;
+
+            return $label.' — '.(int) $c->getAttribute('failed_count');
+        })->implode(', ');
+
+        if ($failed->count() > self::WAITING_SHOWN) {
+            $shown .= ', …';
+        }
+
+        return "\n⚠️ <b>Not delivered ({$total})</b>: {$shown}\n"
+            .'<i>Send them again: php artisan threadlive:retry-failed</i>';
     }
 
     /** https://t.me/c/<group id without -100>/<topic> — opens the topic. */

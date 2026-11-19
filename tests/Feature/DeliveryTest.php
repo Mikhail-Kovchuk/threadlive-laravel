@@ -6,6 +6,7 @@ use Threadlive\Enums\Delivery;
 use Threadlive\Enums\Direction;
 use Threadlive\Enums\TopicState;
 use Threadlive\Jobs\DeliverVisitorMessages;
+use Threadlive\Jobs\RefreshDashboard;
 use Threadlive\Models\Conversation;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\Topics;
@@ -116,4 +117,5 @@ it('marks what it could not send as failed when it gives up', function () {
     (new DeliverVisitorMessages($conversation->id))->failed(new RuntimeException('down'));
 
     expect($conversation->messages()->where('direction', Direction::Visitor)->first()?->delivery)->toBe(Delivery::Failed);
+    Queue::assertPushed(RefreshDashboard::class);
 });

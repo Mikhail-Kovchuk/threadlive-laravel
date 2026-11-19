@@ -1,13 +1,17 @@
 <?php
 
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Threadlive\Enums\ConversationStatus;
+use Threadlive\Enums\Delivery;
 use Threadlive\Enums\Direction;
 use Threadlive\Enums\TopicState;
+use Threadlive\Jobs\DeliverVisitorMessages;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
+use Threadlive\Telegram\Dashboard;
 
 /** A conversation in a topic, as if it had gone through delivery. */
 function conversation(array $attributes = []): Conversation
@@ -96,6 +100,34 @@ it('posts the dashboard once, then edits it in place', function () {
         ->and($posted->first()['text'])->toContain('💬 In progress (1): Maria — 1')
         ->and(telegramCalls('editMessageText'))->toHaveCount(1)
         ->and(telegramCalls('editMessageText')[0]['message_id'])->toBe(1001);
+});
+
+it('lists what could not be delivered on the dashboard, and sends it again on request', function () {
+    Queue::fake();
+    $anna = conversation(['name' => 'Anna']);
+    $john = conversation(['name' => 'John', 'telegram_thread_id' => null]);
+    $anna->messages()->create(['direction' => Direction::Visitor, 'body' => 'One', 'delivery' => Delivery::Failed]);
+    $anna->messages()->create(['direction' => Direction::Visitor, 'body' => 'Two', 'delivery' => Delivery::Failed]);
+    $john->messages()->create(['direction' => Direction::Visitor, 'body' => 'Three', 'delivery' => Delivery::Failed]);
+    $john->messages()->create(['direction' => Direction::Visitor, 'body' => 'Fine', 'delivery' => Delivery::Sent]);
+
+    $html = app(Dashboard::class)->html();
+    expect($html)->toContain('⚠️ <b>Not delivered (3)</b>: <a href="https://t.me/c/')
+        ->and($html)->toContain("Anna #{$anna->id}</a> — 2, John #{$john->id} — 1");
+
+    $this->artisan('threadlive:retry-failed', ['--conversation' => "#{$anna->id}"])
+        ->expectsOutputToContain('Queued 2 messages in 1 conversation.')
+        ->assertSuccessful();
+
+    Queue::assertPushed(DeliverVisitorMessages::class, 1);
+    Queue::assertPushed(DeliverVisitorMessages::class, fn (DeliverVisitorMessages $job) => $job->conversationId === $anna->id);
+    expect(Message::query()->where('delivery', Delivery::Pending)->count())->toBe(2)
+        ->and(app(Dashboard::class)->html())->toContain('Not delivered (1)');
+
+    $this->artisan('threadlive:retry-failed')->expectsOutputToContain('Queued 1 message in 1 conversation.');
+    expect(app(Dashboard::class)->html())->not->toContain('Not delivered');
+
+    $this->artisan('threadlive:retry-failed')->expectsOutputToContain('Nothing failed');
 });
 
 it('does nothing while Threadlive is off', function () {

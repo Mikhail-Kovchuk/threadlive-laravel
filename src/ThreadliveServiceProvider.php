@@ -19,6 +19,7 @@ use Threadlive\Console\ListenCommand;
 use Threadlive\Console\MaintainCommand;
 use Threadlive\Console\MakeCommandCommand;
 use Threadlive\Console\PruneCommand;
+use Threadlive\Console\RetryFailedCommand;
 use Threadlive\Console\SetupCommand;
 use Threadlive\Console\StatusCommand;
 use Threadlive\Console\TestCommand;
@@ -109,6 +110,7 @@ class ThreadliveServiceProvider extends ServiceProvider
                 TestCommand::class,
                 MaintainCommand::class,
                 PruneCommand::class,
+                RetryFailedCommand::class,
             ]);
 
             $this->publishes([

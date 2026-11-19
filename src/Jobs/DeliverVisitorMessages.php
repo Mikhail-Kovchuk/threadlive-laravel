@@ -110,6 +110,9 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
             ->where('conversation_id', $this->conversationId)
             ->where('delivery', Delivery::Pending)
             ->update(['delivery' => Delivery::Failed]);
+
+        // The dashboard's "⚠️ Not delivered" line is how managers learn of it.
+        RefreshDashboard::dispatch();
     }
 
     /** The queue connection and name from config('threadlive.queue'). */
