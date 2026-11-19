@@ -104,6 +104,27 @@ it('ignores bots, other chats, the General topic and unknown topics', function (
     expect($conversation->messages()->count())->toBe($before);
 });
 
+it('deletes the "renamed the topic" lines of its own renames, and only those', function () {
+    fakeTelegram();
+    conversationInTopic();
+
+    $rename = fn (int $id, array $from) => ['message' => [
+        'message_id' => $id,
+        'message_thread_id' => 300,
+        'is_topic_message' => true,
+        'chat' => ['id' => -1001234567890, 'type' => 'supergroup'],
+        'from' => $from,
+        'forum_topic_edited' => ['name' => '💬 Maria → Guest · #1'],
+    ]];
+
+    // The test token is "123:test-token": the bot's id is 123.
+    telegramUpdate($rename(700, ['id' => 123, 'is_bot' => true, 'first_name' => 'threadlive']))->assertOk();
+    telegramUpdate($rename(701, ['id' => 77, 'is_bot' => false, 'first_name' => 'Maria']))->assertOk();
+
+    expect(telegramCalls('deleteMessage'))->toHaveCount(1)
+        ->and(telegramCalls('deleteMessage')[0])->toMatchArray(['chat_id' => '-1001234567890', 'message_id' => 700]);
+});
+
 it('takes a conversation with the Take button', function () {
     fakeTelegram();
     [$conversation, $token] = conversationInTopic();

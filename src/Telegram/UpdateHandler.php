@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Threadlive\Telegram;
 
+use Illuminate\Support\Str;
 use Threadlive\Enums\ConversationStatus;
 use Threadlive\Enums\Direction;
 use Threadlive\Events\AgentReplied;
@@ -42,7 +43,17 @@ final class UpdateHandler
         $edited = is_array($update['edited_message'] ?? null);
         $message = $update['message'] ?? $update['edited_message'] ?? null;
 
-        if (! is_array($message) || ! $this->fromOurGroup($message) || ($message['from']['is_bot'] ?? false) === true) {
+        if (! is_array($message) || ! $this->fromOurGroup($message)) {
+            return;
+        }
+
+        if ($this->isOwnRename($message)) {
+            $this->deleteServiceMessage($message);
+
+            return;
+        }
+
+        if (($message['from']['is_bot'] ?? false) === true) {
             return;
         }
 
@@ -222,6 +233,46 @@ final class UpdateHandler
         try {
             $this->telegram->call('answerCallbackQuery', ['callback_query_id' => $callbackId, 'text' => $text]);
         } catch (TelegramException $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * "threadlive renamed the topic to …": Telegram posts one in the topic on
+     * every rename, and the package renames on every status change. The name
+     * itself shows the status, so the line is only noise in the conversation.
+     * Renames made by people stay.
+     *
+     * A bot's id is the part of its token before the colon.
+     *
+     * @param  array<mixed>  $message
+     */
+    private function isOwnRename(array $message): bool
+    {
+        $botId = Str::before((string) config('threadlive.bot_token'), ':');
+
+        return is_array($message['forum_topic_edited'] ?? null)
+            && ($message['from']['is_bot'] ?? false) === true
+            && $botId !== ''
+            && (string) ($message['from']['id'] ?? '') === $botId;
+    }
+
+    /**
+     * @param  array<mixed>  $message
+     */
+    private function deleteServiceMessage(array $message): void
+    {
+        if (! is_int($message['message_id'] ?? null)) {
+            return;
+        }
+
+        try {
+            $this->telegram->call('deleteMessage', [
+                'chat_id' => (string) config('threadlive.chat_id'),
+                'message_id' => $message['message_id'],
+            ]);
+        } catch (TelegramException $e) {
+            // Without "Delete messages" the line just stays; setup reports the right.
             report($e);
         }
     }
