@@ -12,6 +12,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Storage;
 use Threadlive\Enums\Delivery;
 use Threadlive\Enums\Direction;
 use Threadlive\Enums\TopicState;
@@ -140,8 +141,15 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
         $this->translate($conversation, $pending);
         $thread = $topics->ensureOpen($conversation);
 
-        foreach ($this->batches($pending) as [$messages, $html, $silent]) {
-            $messageId = $telegram->sendMessage($topics->chatId(), $html, $thread, $silent);
+        foreach ($this->batches($pending) as [$messages, $html, $silent, $files]) {
+            $messageId = $html === null ? null : $telegram->sendMessage($topics->chatId(), $html, $thread, $silent);
+
+            // The files after the text; the first one makes the sound when
+            // there was no text to make it.
+            foreach ($files as $i => $file) {
+                $fileMessageId = $this->sendFile($telegram, $topics->chatId(), $thread, $file, silent: $html !== null || $i > 0);
+                $messageId ??= $fileMessageId;
+            }
 
             Message::query()->whereKey($messages->pluck('id')->all())->update([
                 'delivery' => Delivery::Sent,
@@ -191,12 +199,54 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
     }
 
     /**
+     * A photo (sendPhoto) or anything else (sendDocument; GIFs too, which
+     * sendPhoto would flatten). A photo Telegram refuses — too large, odd
+     * proportions — goes as a document instead.
+     *
+     * @param  array<string, mixed>  $file
+     *
+     * @throws TelegramException
+     */
+    private function sendFile(TelegramClient $telegram, string $chatId, int $thread, array $file, bool $silent): ?int
+    {
+        $disk = is_string($file['disk'] ?? null) ? $file['disk'] : null;
+        $path = is_string($file['path'] ?? null) ? $file['path'] : null;
+        $contents = $disk !== null && $path !== null ? Storage::disk($disk)->get($path) : null;
+
+        if ($contents === null) {
+            return null; // Gone from the disk (pruned): nothing to send.
+        }
+
+        $mime = is_string($file['mime'] ?? null) ? $file['mime'] : '';
+        $name = is_string($file['name'] ?? null) ? $file['name'] : 'file';
+        $params = ['chat_id' => $chatId, 'message_thread_id' => $thread, 'disable_notification' => $silent];
+
+        if (str_starts_with($mime, 'image/') && $mime !== 'image/gif') {
+            try {
+                return self::messageId($telegram->upload('sendPhoto', $params, ['photo', $contents, $name]));
+            } catch (TelegramException $e) {
+                if ($e->isMissingTopic() || $e->retryAfter !== null) {
+                    throw $e;
+                }
+            }
+        }
+
+        return self::messageId($telegram->upload('sendDocument', $params, ['document', $contents, $name]));
+    }
+
+    private static function messageId(mixed $result): ?int
+    {
+        return is_array($result) && is_int($result['message_id'] ?? null) ? $result['message_id'] : null;
+    }
+
+    /**
      * Consecutive visitor messages become one Telegram message; a context
-     * card is its own, silent one. Only visitor messages make a sound.
+     * card is its own, silent one; a message with files is its own — its
+     * text, then the files. Only visitor messages make a sound.
      * Translations follow the originals: "🌐 ES → EN", then the text.
      *
      * @param  Collection<int, Message>  $pending
-     * @return list<array{Collection<int, Message>, string, bool}>
+     * @return list<array{Collection<int, Message>, string|null, bool, list<array<string, mixed>>}>
      */
     private function batches(Collection $pending): array
     {
@@ -207,7 +257,7 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
 
         $flush = function () use (&$batches, &$run, &$length) {
             if ($run->isNotEmpty()) {
-                $batches[] = [$run, self::compose($run), false];
+                $batches[] = [$run, self::compose($run), false, []];
             }
             $run = new Collection;
             $length = 0;
@@ -216,7 +266,15 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
         foreach ($pending as $message) {
             if ($message->direction === Direction::Context) {
                 $flush();
-                $batches[] = [new Collection([$message]), '📋 <i>'.e($message->body).'</i>', true];
+                $batches[] = [new Collection([$message]), '📋 <i>'.e($message->body).'</i>', true, []];
+
+                continue;
+            }
+
+            if ($message->attachments !== null && $message->attachments !== []) {
+                $flush();
+                $own = new Collection([$message]);
+                $batches[] = [$own, trim($message->body) === '' ? null : self::compose($own), false, array_values($message->attachments)];
 
                 continue;
             }

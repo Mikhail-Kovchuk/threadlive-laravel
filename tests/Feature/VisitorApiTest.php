@@ -22,6 +22,12 @@ describe('bootstrap', function () {
             'poll_ms' => ['open' => 3000, 'closed' => 30000, 'idle' => 15000, 'idle_after' => 300000],
             'topics' => [],
             'max_message_length' => 2000,
+            'attachments' => [
+                'enabled' => true,
+                'max_kb' => 10240,
+                'max_files' => 5,
+                'accept' => ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'],
+            ],
             'agent_display_name' => 'Support',
             'conversation' => null,
         ]);

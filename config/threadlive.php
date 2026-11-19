@@ -179,11 +179,16 @@ return [
 
     'max_message_length' => 2000,
 
-    // Screenshots both ways (coming in a later release).
+    // Files both ways: the visitor attaches (📎, paste, drop), a manager sends
+    // a photo or document in the topic. Stored on `disk` (private: served
+    // only through signed links), checked by content, not by name. `types`
+    // are extensions; Telegram lets the bot fetch files up to 20 MB.
     'attachments' => [
-        'enabled' => false,
+        'enabled' => true,
         'disk' => 'local',
         'max_kb' => 10240,
+        'max_files' => 5,
+        'types' => ['png', 'jpg', 'jpeg', 'webp', 'gif', 'pdf'],
     ],
 
 ];

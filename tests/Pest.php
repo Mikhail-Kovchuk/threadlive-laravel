@@ -70,6 +70,12 @@ function fakeTelegram(array $overrides = []): void
 
     Http::fake(['api.telegram.org/*' => function (Request $request) use (&$threadIds, &$messageIds, &$calls) {
         $overrides = $GLOBALS['telegramOverrides'];
+
+        // A file download (after getFile): the bytes themselves.
+        if (str_contains($request->url(), '/file/bot')) {
+            return Http::response('fake-file-bytes');
+        }
+
         $method = Str::afterLast($request->url(), '/');
         $calls[$method] = ($calls[$method] ?? 0) + 1;
 
@@ -93,7 +99,8 @@ function fakeTelegram(array $overrides = []): void
 
         return Http::response(['ok' => true, 'result' => match ($method) {
             'createForumTopic' => ['message_thread_id' => ++$threadIds, 'name' => $request->data()['name'] ?? ''],
-            'sendMessage' => ['message_id' => ++$messageIds],
+            'sendMessage', 'sendPhoto', 'sendDocument' => ['message_id' => ++$messageIds],
+            'getFile' => ['file_id' => 'f', 'file_path' => 'photos/file_7.jpg'],
             default => true,
         }]);
     }]);
@@ -112,6 +119,27 @@ function telegramCalls(string $method): array
         ->map(fn (Request $request) => $request->data())
         ->values()
         ->all();
+}
+
+/**
+ * A multipart call (sendPhoto, sendDocument) as name => value; a file part
+ * as ['filename' => …, 'contents' => …].
+ *
+ * @param  array<int|string, mixed>  $parts
+ * @return array<string, mixed>
+ */
+function multipart(array $parts): array
+{
+    $fields = [];
+    foreach ($parts as $part) {
+        if (is_array($part) && isset($part['name'])) {
+            $fields[$part['name']] = isset($part['filename'])
+                ? ['filename' => $part['filename'], 'contents' => (string) $part['contents']]
+                : (string) $part['contents'];
+        }
+    }
+
+    return $fields;
 }
 
 /**

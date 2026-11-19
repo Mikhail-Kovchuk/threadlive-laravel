@@ -44,6 +44,73 @@ final class TelegramClient
     }
 
     /**
+     * A call with a file in it (sendPhoto, sendDocument): multipart, the
+     * other params as fields (arrays as JSON, as the Bot API takes them).
+     *
+     * @param  array<string, mixed>  $params
+     * @param  array{0: string, 1: string, 2: string}  $file  field, contents, filename
+     *
+     * @throws TelegramException
+     */
+    public function upload(string $method, array $params, array $file): mixed
+    {
+        if ($this->token === '') {
+            throw new TelegramException('THREADLIVE_BOT_TOKEN is not set.');
+        }
+
+        $fields = [];
+        foreach ($params as $name => $value) {
+            if ($value === null) {
+                continue;
+            }
+            $fields[$name] = match (true) {
+                is_array($value) => (string) json_encode($value),
+                is_bool($value) => $value ? 'true' : 'false',
+                default => (string) $value,
+            };
+        }
+
+        $response = $this->http
+            ->acceptJson()
+            ->timeout(120)
+            ->attach($file[0], $file[1], $file[2])
+            ->post(self::API."/bot{$this->token}/{$method}", $fields);
+
+        $data = $response->json();
+
+        if (! is_array($data) || ($data['ok'] ?? false) !== true) {
+            throw TelegramException::fromResponse($method, $response->status(), is_array($data) ? $data : []);
+        }
+
+        return $data['result'] ?? null;
+    }
+
+    /**
+     * A file someone sent in the group. Telegram lets a bot fetch up to 20 MB.
+     *
+     * @return array{contents: string, path: string}
+     *
+     * @throws TelegramException
+     */
+    public function download(string $fileId): array
+    {
+        $file = $this->call('getFile', ['file_id' => $fileId]);
+        $path = is_array($file) && is_string($file['file_path'] ?? null) ? $file['file_path'] : null;
+
+        if ($path === null) {
+            throw new TelegramException('Telegram getFile: no file_path in the answer.');
+        }
+
+        $response = $this->http->timeout(120)->get(self::API."/file/bot{$this->token}/{$path}");
+
+        if (! $response->successful()) {
+            throw new TelegramException("Telegram file download: HTTP {$response->status()}", $response->status());
+        }
+
+        return ['contents' => $response->body(), 'path' => $path];
+    }
+
+    /**
      * @param  list<list<array{text: string, callback_data: string}>>|null  $keyboard
      * @return int the message id
      *

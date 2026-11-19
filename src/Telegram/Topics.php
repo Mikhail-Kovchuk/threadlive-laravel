@@ -176,7 +176,7 @@ final class Topics
 
         $lines = $previous->map(fn (Message $m) => ($m->direction === Direction::Agent
             ? '🧑‍💼 '.e($m->agent_name ?: 'Support')
-            : '👤 Visitor').': '.e(Str::limit($m->body, 200)));
+            : '👤 Visitor').': '.e(Str::limit($m->body !== '' ? $m->body : '📎 a file', 200)));
 
         return '↩️ <b>Returning visitor</b> — previous conversation '
             .e($last->created_at?->format('j M Y') ?? '')

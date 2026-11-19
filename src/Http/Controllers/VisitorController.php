@@ -8,6 +8,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
@@ -19,6 +20,7 @@ use Threadlive\Events\ConversationStarted;
 use Threadlive\Events\VisitorMessageReceived;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
+use Threadlive\Support\Attachments;
 use Threadlive\Support\Visitor;
 use Threadlive\Support\WorkingHours;
 
@@ -60,6 +62,12 @@ final class VisitorController
                 fn ($topic) => is_string($topic) && trim($topic) !== '',
             )),
             'max_message_length' => $this->maxLength(),
+            'attachments' => [
+                'enabled' => Attachments::enabled(),
+                'max_kb' => Attachments::maxKb(),
+                'max_files' => Attachments::maxFiles(),
+                'accept' => Attachments::accept(),
+            ],
             'agent_display_name' => (string) config('threadlive.agent_display_name', 'Support'),
             'conversation' => $visitor->conversation ? $this->conversationJson($visitor->conversation) : null,
         ]);
@@ -86,20 +94,40 @@ final class VisitorController
 
     public function store(Request $request): JsonResponse
     {
+        // With files the widget posts multipart, and the context comes as JSON text.
+        if (is_string($request->input('context'))) {
+            $request->merge(['context' => json_decode((string) $request->input('context'), true)]);
+        }
+
+        if ($request->hasFile('files') && ! Attachments::enabled()) {
+            abort(422, 'Files cannot be sent here.');
+        }
+
         $max = $this->maxLength();
+        $maxMb = round(Attachments::maxKb() / 1024, 1);
         $data = $request->validate([
-            'body' => ['required', 'string', 'max:'.$max],
+            'body' => ['nullable', 'required_without:files', 'string', 'max:'.$max],
             'client_msg_id' => ['required', 'uuid'],
             'context' => ['nullable', 'array'],
             'context.url' => ['nullable', 'string', 'max:2048'],
             'context.title' => ['nullable', 'string', 'max:300'],
             'context.attributes' => ['nullable', 'array', 'max:20'],
+            'files' => ['nullable', 'array', 'max:'.Attachments::maxFiles()],
+            // mimes: judged by the content, not by the name.
+            'files.*' => ['file', 'max:'.Attachments::maxKb(), 'mimes:'.implode(',', Attachments::types())],
         ], [
-            'body.required' => 'Write a message first.',
+            'body.required_without' => 'Write a message first.',
             'body.max' => 'The message may not be longer than :max characters.',
             'client_msg_id.*' => 'The message could not be sent. Reload the page and try again.',
             'context.*' => 'The message could not be sent. Reload the page and try again.',
+            'files.max' => 'Up to :max files in one message.',
+            'files.*.max' => "Each file may be up to {$maxMb} MB.",
+            'files.*.mimes' => 'Send '.Attachments::typesForPeople().' files.',
+            'files.*.file' => 'The file did not arrive. Try again.',
         ]);
+
+        /** @var list<UploadedFile> $files */
+        $files = array_values(array_filter((array) $request->file('files', []), fn ($f) => $f instanceof UploadedFile));
 
         $visitor = Visitor::resolve($request, $this->host);
 
@@ -108,7 +136,7 @@ final class VisitorController
         }
 
         $clientMsgId = (string) $data['client_msg_id'];
-        $body = (string) $data['body'];
+        $body = (string) ($data['body'] ?? '');
         $client = $this->clientContext(is_array($data['context'] ?? null) ? $data['context'] : []);
 
         // A retry of a send that did arrive: answer with what is stored.
@@ -137,7 +165,7 @@ final class VisitorController
 
         try {
             [$conversation, $card, $message, $token, $started] = DB::transaction(
-                fn () => $this->record($request, $visitor, $body, $clientMsgId, $client, $line, $managerCard),
+                fn () => $this->record($request, $visitor, $body, $clientMsgId, $client, $line, $managerCard, $files),
             );
         } catch (UniqueConstraintViolationException) {
             // The same retry arrived twice at once; the other one stored it.
@@ -191,9 +219,10 @@ final class VisitorController
     /**
      * @param  array{url?: string, title?: string, attributes?: array<string, string>}  $client
      * @param  array{lines: list<array{label: string, value: string, url?: string}>, admin_url: string|null}  $managerCard
+     * @param  list<UploadedFile>  $files
      * @return array{Conversation, ?Message, Message, ?string, bool}
      */
-    private function record(Request $request, Visitor $visitor, string $body, string $clientMsgId, array $client, ?string $line, array $managerCard): array
+    private function record(Request $request, Visitor $visitor, string $body, string $clientMsgId, array $client, ?string $line, array $managerCard, array $files): array
     {
         $token = null;
         $started = false;
@@ -234,6 +263,9 @@ final class VisitorController
             'body' => $body,
             'client_msg_id' => $clientMsgId,
             'delivery' => Delivery::Pending,
+            'attachments' => $files === []
+                ? null
+                : array_map(fn (UploadedFile $file) => Attachments::storeUpload($file, $conversation), $files),
         ]);
 
         $wasWaiting = ! $started && $conversation->status === ConversationStatus::Waiting;
@@ -350,7 +382,7 @@ final class VisitorController
     }
 
     /**
-     * @return array{id: int, direction: string, body: string, created_at: string|null, author: string|null, client_msg_id?: string|null}
+     * @return array{id: int, direction: string, body: string, created_at: string|null, author: string|null, client_msg_id?: string|null, attachments?: list<array<string, mixed>>}
      */
     private function messageJson(Message $message): array
     {
@@ -372,6 +404,13 @@ final class VisitorController
 
         if ($message->direction === Direction::Visitor) {
             $json['client_msg_id'] = $message->client_msg_id;
+        }
+
+        if ($message->attachments !== null && $message->attachments !== []) {
+            $json['attachments'] = array_map(
+                fn (array $file) => Attachments::forVisitor($message, $file),
+                array_values($message->attachments),
+            );
         }
 
         return $json;

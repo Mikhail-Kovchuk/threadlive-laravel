@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Threadlive\Http\Controllers\FileController;
 use Threadlive\Http\Controllers\TelegramWebhookController;
 use Threadlive\Http\Controllers\VisitorController;
 use Threadlive\Http\Middleware\EnsureEnabled;
@@ -28,6 +29,13 @@ Route::prefix($prefix)
             Route::post('read', [VisitorController::class, 'read'])->name('read');
             Route::post('email', [VisitorController::class, 'email'])->name('email');
         });
+
+        // Opened by <img> and links in the widget, which cannot send the
+        // visitor's token: the signed link is the permission.
+        Route::get('files/{message}/{file}', [FileController::class, 'show'])
+            ->middleware([EnsureEnabled::class, 'signed:relative'])
+            ->whereNumber('message')
+            ->name('files.show');
     });
 
 // Telegram's own route: none of the host's middleware (its auth means
