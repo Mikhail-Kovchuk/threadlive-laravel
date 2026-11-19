@@ -13,6 +13,9 @@ use Threadlive\Models\Conversation;
 /** Who is asking, and their conversation if they have one. */
 final class Visitor
 {
+    /** A guest conversation is taken along on signing in only if active this recently. */
+    private const ATTACH_WITHIN_HOURS = 2;
+
     public function __construct(
         public readonly ?ChatUser $user,
         public readonly ?string $tokenHash,
@@ -45,7 +48,12 @@ final class Visitor
 
         $conversation = Conversation::query()->where('user_ref', $user->id)->latest('id')->first();
 
-        if ($conversation === null && $guestConversation !== null) {
+        // Only a guest conversation from just now: the token stays in the
+        // browser, and on a shared computer the next person to sign in must
+        // not get an earlier guest's chat — nor one planted for them.
+        $recent = $guestConversation?->last_activity_at?->gte(now()->subHours(self::ATTACH_WITHIN_HOURS)) ?? false;
+
+        if ($conversation === null && $guestConversation !== null && $recent) {
             // The managers' card gets the admin link now; the topic hears
             // about it (VisitorSignedIn → AnnounceSignIn).
             $context = $guestConversation->context ?? [];

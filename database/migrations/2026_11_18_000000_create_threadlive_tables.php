@@ -74,6 +74,8 @@ return new class extends Migration
             // A retried send must not store the message twice.
             $table->unique(['conversation_id', 'client_msg_id']);
             $table->index(['conversation_id', 'direction', 'id']);
+            // The dashboard's "Not delivered" and threadlive:retry-failed.
+            $table->index(['delivery', 'conversation_id']);
         });
     }
 

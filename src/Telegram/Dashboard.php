@@ -79,12 +79,15 @@ final class Dashboard
         $tz = WorkingHours::fromConfig()->tz;
         $now = Carbon::now($tz);
 
+        // Counted in the database; only the names shown are loaded.
+        $waitingCount = Conversation::query()->where('status', ConversationStatus::Waiting)->count();
         $waiting = Conversation::query()
             ->where('status', ConversationStatus::Waiting)
             ->orderBy('last_visitor_message_at')
+            ->limit(self::WAITING_SHOWN)
             ->get();
 
-        $shown = $waiting->take(self::WAITING_SHOWN)->map(function (Conversation $c) use ($now) {
+        $shown = $waiting->map(function (Conversation $c) use ($now) {
             $name = e($c->name ?: 'Guest');
             $link = self::topicLink($c);
             $label = $link ? '<a href="'.e($link).'">'.$name.'</a>' : $name;
@@ -92,28 +95,33 @@ final class Dashboard
             return $label.' · '.self::age($c->last_visitor_message_at, $now);
         })->implode(', ');
 
-        if ($waiting->count() > self::WAITING_SHOWN) {
+        if ($waitingCount > self::WAITING_SHOWN) {
             $shown .= ', …';
         }
 
-        $inProgress = Conversation::query()
+        /** @var array<string, int> $byAssignee */
+        $byAssignee = Conversation::query()
             ->where('status', ConversationStatus::Answered)
+            ->groupBy('assignee_name')
+            ->selectRaw('assignee_name, count(*) as total')
+            ->toBase()
             ->get()
-            ->groupBy(fn (Conversation $c) => $c->assignee_name ?: 'Unassigned')
-            ->map(fn ($group, $name) => e((string) $name).' — '.$group->count())
-            ->sort()
-            ->implode(', ');
+            ->mapWithKeys(fn (object $row) => [(string) (($row->assignee_name ?? '') ?: 'Unassigned') => (int) ($row->total ?? 0)])
+            ->all();
+        ksort($byAssignee);
+        $answered = array_sum($byAssignee);
+        $inProgress = collect($byAssignee)->map(fn (int $count, string $name) => e($name).' — '.$count)->implode(', ');
 
-        $answered = Conversation::query()->where('status', ConversationStatus::Answered)->count();
+        // Dates are stored in the application's time zone; the day starts in support's.
         $closedToday = Conversation::query()
             ->where('status', ConversationStatus::Closed)
-            ->where('closed_at', '>=', $now->copy()->startOfDay()->utc())
+            ->where('closed_at', '>=', $now->copy()->startOfDay()->setTimezone((string) config('app.timezone', 'UTC')))
             ->count();
 
         return implode("\n", array_filter([
             '📊 <b>Support</b> · updated '.$now->format('H:i'),
             '',
-            "❗ Waiting for a reply ({$waiting->count()})".($shown !== '' ? ': '.$shown : ''),
+            "❗ Waiting for a reply ({$waitingCount})".($shown !== '' ? ': '.$shown : ''),
             "💬 In progress ({$answered})".($inProgress !== '' ? ': '.$inProgress : ''),
             "✅ Closed today: {$closedToday}",
             $this->notDelivered(),

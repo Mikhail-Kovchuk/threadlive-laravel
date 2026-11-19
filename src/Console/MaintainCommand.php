@@ -87,6 +87,9 @@ final class MaintainCommand extends Command
 
         $deleted = 0;
         Conversation::query()
+            // Closed as a conversation too: a visitor who just came back is
+            // having their topic reopened, not deleted.
+            ->where('status', ConversationStatus::Closed)
             ->where('topic_state', TopicState::Closed)
             ->where('topic_closed_at', '<', now()->subDays($days))
             ->whereNotNull('telegram_thread_id')

@@ -9,7 +9,9 @@ use Threadlive\Events\AgentReplied;
 use Threadlive\Events\ConversationClosed;
 use Threadlive\Jobs\SyncTopic;
 use Threadlive\Models\Conversation;
+use Threadlive\Support\ConversationActions;
 use Threadlive\Telegram\Topics;
+use Threadlive\Telegram\UpdateHandler;
 
 /**
  * A guest conversation with an open topic, thread 300, and the guest's token.
@@ -84,6 +86,57 @@ it('shows the visitor an edited reply', function () {
 
     $reply = $conversation->messages()->where('direction', Direction::Agent)->firstOrFail();
     expect($reply->body)->toBe('Right text')->and($reply->edited_at)->not->toBeNull();
+});
+
+it('gives an open widget the edited reply, with what is new after it', function () {
+    [$conversation, $token] = conversationInTopic();
+    telegramUpdate(['message' => managerMessage(300, 'Wrong text', 5001)]);
+    $replyId = $conversation->messages()->where('direction', Direction::Agent)->value('id');
+
+    telegramUpdate(['edited_message' => managerMessage(300, 'Right text', 5001)]);
+
+    // The widget already has the reply, and asks for what came after it.
+    $messages = $this->getJson("/threadlive/messages?after={$replyId}", ['X-Threadlive-Token' => $token])->json('messages');
+    expect(collect($messages)->pluck('body')->all())->toBe(['Right text']);
+
+    $this->travel(11)->minutes();
+    expect($this->getJson("/threadlive/messages?after={$replyId}", ['X-Threadlive-Token' => $token])->json('messages'))->toBe([]);
+});
+
+it('handles an update Telegram sends again only once', function () {
+    [$conversation] = conversationInTopic();
+    $update = ['update_id' => 777, 'message' => managerMessage(300, 'Only once')];
+
+    telegramUpdate($update)->assertOk();
+    telegramUpdate($update)->assertOk();
+
+    expect($conversation->messages()->where('direction', Direction::Agent)->count())->toBe(1);
+});
+
+it('lets only the first of two managers answering at once join the chat', function () {
+    [$conversation] = conversationInTopic();
+    // Loaded before either reply — as the second request would have it.
+    $stale = Conversation::query()->findOrFail($conversation->id);
+
+    telegramUpdate(['message' => managerMessage(300, 'I have it', 5001, 'Maria', 77)]);
+    $joinedBefore = $conversation->messages()->where('direction', Direction::System)->count();
+    (fn () => $this->assign($stale, ['id' => 88, 'first_name' => 'Olesya'], onlyIfFree: true))
+        ->call(app(UpdateHandler::class));
+
+    expect($conversation->refresh()->assignee_name)->toBe('Maria')
+        ->and($conversation->messages()->where('direction', Direction::System)->count())->toBe($joinedBefore)
+        ->and($stale->assignee_name)->toBe('Maria');
+});
+
+it('does not close over a visitor message stored after the close was decided', function () {
+    [$conversation] = conversationInTopic();
+    $stale = Conversation::query()->findOrFail($conversation->id);
+    // Meanwhile the visitor writes again.
+    $this->travel(1)->minutes();
+    $conversation->forceFill(['last_visitor_message_at' => now()])->save();
+
+    expect(ConversationActions::close($stale, 'auto'))->toBeFalse()
+        ->and($conversation->refresh()->status)->not->toBe(ConversationStatus::Closed);
 });
 
 it('ignores bots, other chats, the General topic and unknown topics', function () {

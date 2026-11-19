@@ -18,6 +18,7 @@ use Threadlive\Models\Message;
 use Threadlive\Support\Attachments;
 use Threadlive\Support\ConversationActions;
 use Threadlive\Translation\Languages;
+use Threadlive\Translation\Translation;
 use Threadlive\Translation\TranslationService;
 
 /**
@@ -53,6 +54,12 @@ final class UpdateHandler
      */
     public function handle(array $update): void
     {
+        // Telegram sends an update again when the answer to it was slow (a
+        // file download, a translation): handled once.
+        if (is_int($update['update_id'] ?? null) && ! $this->cache->add('threadlive:update:'.$update['update_id'], true, now()->addDay())) {
+            return;
+        }
+
         if (is_array($update['callback_query'] ?? null)) {
             $this->callback($update['callback_query']);
 
@@ -264,31 +271,20 @@ final class UpdateHandler
     /**
      * With /translate on, the visitor gets the reply in their language, and
      * the topic a silent "🌐 → ES: …" under the reply, so the manager sees
-     * what went out. Without a translation (off, failed, same language) the
-     * reply goes as written.
-     *
-     * @param  array<mixed>  $telegramMessage
+     * what went out. Null — the reply goes as written — when translation is
+     * off, fails, or the reply is already in that language.
      */
-    private function translateReply(Conversation $conversation, Message $reply, array $telegramMessage): void
+    private function replyTranslation(Conversation $conversation, string $text): ?Translation
     {
         $language = $conversation->visitor_language;
 
-        if ($conversation->translate_to === null || $language === null || trim($reply->body) === '') {
-            return;
+        if ($conversation->translate_to === null || $language === null || trim($text) === '') {
+            return null;
         }
 
-        $translation = $this->translation->translate($reply->body, $language);
+        $translation = $this->translation->translate($text, $language);
 
-        if ($translation === null || $translation->isSameLanguage()) {
-            $reply->forceFill(['translation' => null])->save();
-
-            return;
-        }
-
-        $reply->forceFill(['translation' => $translation->toArray()])->save();
-        // Quoted, like everything in the visitor's language in the topic.
-        $this->replyTo($telegramMessage, '🌐 <b>→ '.Languages::label($language)."</b>\n"
-            .DeliverVisitorMessages::quote(e($translation->text)));
+        return $translation === null || $translation->isSameLanguage() ? null : $translation;
     }
 
     /**
@@ -301,12 +297,17 @@ final class UpdateHandler
         $name = $this->name($from);
 
         if (config('threadlive.assign_on_first_reply', true) && $conversation->assignee_name === null) {
-            $this->assign($conversation, $from);
+            $this->assign($conversation, $from, onlyIfFree: true);
         }
+
+        // Translated before it is stored: a poll in between would otherwise
+        // show the visitor the manager's original, and never ask again.
+        $translation = $this->replyTranslation($conversation, $text);
 
         $message = $conversation->messages()->create([
             'direction' => Direction::Agent,
             'body' => $text,
+            'translation' => $translation?->toArray(),
             'telegram_message_id' => $telegramMessageId,
             'telegram_from_id' => is_int($from['id'] ?? null) ? $from['id'] : null,
             'agent_name' => $name,
@@ -323,7 +324,12 @@ final class UpdateHandler
             'unread_email_sent_at' => null,
         ])->save();
 
-        $this->translateReply($conversation, $message, $telegramMessage);
+        if ($translation !== null && $conversation->visitor_language !== null) {
+            // Quoted, like everything in the visitor's language in the topic.
+            $this->replyTo($telegramMessage, '🌐 <b>→ '.Languages::label($conversation->visitor_language).'</b>
+'
+                .DeliverVisitorMessages::quote(e($translation->text)));
+        }
 
         SyncTopic::dispatch($conversation->id);
         RefreshDashboard::dispatch();
@@ -363,16 +369,30 @@ final class UpdateHandler
     /**
      * @param  array<mixed>  $from
      */
-    private function assign(Conversation $conversation, array $from): void
+    private function assign(Conversation $conversation, array $from, bool $onlyIfFree = false): void
     {
         $name = $this->name($from);
-
-        $conversation->messages()->create(['direction' => Direction::System, 'body' => "{$name} joined the chat"]);
-        $conversation->forceFill([
+        $attributes = [
             'assignee_tg_id' => is_int($from['id'] ?? null) ? $from['id'] : null,
             'assignee_name' => $name,
             'assigned_at' => now(),
-        ])->save();
+        ];
+
+        // Two managers answering at once: one update finds it free, the
+        // other finds it taken — one "joined the chat", not two.
+        $taken = Conversation::query()
+            ->whereKey($conversation->id)
+            ->when($onlyIfFree, fn ($q) => $q->whereNull('assignee_name'))
+            ->update($attributes);
+
+        if ($taken === 0) {
+            $conversation->refresh();
+
+            return;
+        }
+
+        $conversation->forceFill($attributes)->syncOriginal();
+        $conversation->messages()->create(['direction' => Direction::System, 'body' => "{$name} joined the chat"]);
     }
 
     /**

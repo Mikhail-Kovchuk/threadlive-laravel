@@ -99,14 +99,21 @@ final class UnreadReplies extends Mailable
             return null;
         }
 
+        $siteParts = parse_url($site);
         $page = $this->conversation->context['url'] ?? null;
-        $siteHost = parse_url($site, PHP_URL_HOST);
+        $pageParts = is_string($page) ? parse_url($page) : false;
 
-        if (is_string($page) && preg_match('#^https?://#i', $page) && is_string($siteHost)
-            && strcasecmp((string) parse_url($page, PHP_URL_HOST), $siteHost) === 0) {
-            return $page;
+        if (! is_array($siteParts) || ! isset($siteParts['host']) || ! is_array($pageParts) || ! isset($pageParts['host'])
+            || strcasecmp($pageParts['host'], $siteParts['host']) !== 0) {
+            return $site;
         }
 
-        return $site;
+        // Rebuilt on the configured origin, never passed on as written: a
+        // URL parse_url reads one way and a browser another
+        // ("https://evil.example\@site.example/") cannot lead anywhere else.
+        $origin = strtolower($siteParts['scheme'] ?? 'https').'://'.$siteParts['host'].(isset($siteParts['port']) ? ':'.$siteParts['port'] : '');
+        $path = '/'.ltrim(str_replace('\\', '/', $pageParts['path'] ?? ''), '/');
+
+        return $origin.$path.(isset($pageParts['query']) ? '?'.$pageParts['query'] : '');
     }
 }

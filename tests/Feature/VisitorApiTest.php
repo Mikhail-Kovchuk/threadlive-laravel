@@ -275,6 +275,16 @@ describe('a signed-in visitor', function () {
         expect(Conversation::query()->firstOrFail()->user_ref)->toBe('42');
     });
 
+    it('does not hand an old guest chat to whoever signs in next on that browser', function () {
+        $token = sendMessage('Written as a guest, yesterday')->json('visitor_token');
+        $this->travel(3)->hours();
+
+        FakeChatHost::$user = new ChatUser('42', 'Anna');
+        $this->getJson('/threadlive/messages', ['X-Threadlive-Token' => $token])->assertNotFound();
+
+        expect(Conversation::query()->firstOrFail()->user_ref)->toBeNull();
+    });
+
     it('leaves nothing behind for the next guest with the same token', function () {
         $token = sendMessage('Private question')->json('visitor_token');
         FakeChatHost::$user = new ChatUser('42');

@@ -137,6 +137,23 @@ it('sends the visitor a manager\'s reply in their language, and shows the manage
     expect($reply['body'])->toBe('[es] Your order was approved');
 });
 
+it('never shows the visitor a reply before its translation', function () {
+    fakeTelegram();
+    [$conversation, $token] = spanishConversation();
+    $conversation->forceFill(['translate_to' => 'en', 'visitor_language' => 'es'])->save();
+    $seen = null;
+    // What a poll would find while the translator is still working.
+    FakeTranslator::$before = function () use (&$seen, $conversation) {
+        $seen = $conversation->messages()->where('direction', 'agent')->pluck('body')->all();
+    };
+
+    telegramUpdate(['message' => managerMessage(300, 'Checking it now', 5100)]);
+
+    expect($seen)->toBe([])
+        ->and($conversation->messages()->where('direction', 'agent')->firstOrFail()->translation['text'] ?? null)
+        ->toBe('[es] Checking it now');
+});
+
 it('sends the reply as written when the translator fails', function () {
     fakeTelegram();
     [$conversation, $token] = spanishConversation();

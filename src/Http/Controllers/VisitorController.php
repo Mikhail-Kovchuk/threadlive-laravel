@@ -42,6 +42,9 @@ final class VisitorController
     /** Messages one conversation may send a minute; a burst within it goes to the topic as one post. */
     private const MESSAGES_PER_MINUTE = 15;
 
+    /** An edit reaches an open widget within this long; later ones show on the next page load. */
+    private const EDITS_SHOWN_MINUTES = 10;
+
     /** The most a full-history request returns. */
     private const HISTORY_LIMIT = 500;
 
@@ -95,7 +98,14 @@ final class VisitorController
         $query = $conversation->messages()->where('direction', '!=', Direction::Note);
 
         if (is_numeric($after)) {
-            $messages = $query->where('id', '>', (int) $after)->orderBy('id')->get();
+            // What is new — and replies edited lately, which the widget
+            // already has under the old text: it puts the new one in place.
+            $messages = $query
+                ->where(fn ($q) => $q
+                    ->where('id', '>', (int) $after)
+                    ->orWhere('edited_at', '>=', now()->subMinutes(self::EDITS_SHOWN_MINUTES)))
+                ->orderBy('id')
+                ->get();
         } else {
             $messages = $query->orderByDesc('id')->limit(self::HISTORY_LIMIT)->get()->reverse()->values();
         }

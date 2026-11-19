@@ -104,6 +104,23 @@ it('posts the dashboard once, then edits it in place', function () {
         ->and(telegramCalls('editMessageText')[0]['message_id'])->toBe(1001);
 });
 
+it('counts "closed today" by support\'s day when the app keeps another time zone', function () {
+    $default = date_default_timezone_get();
+    date_default_timezone_set('Europe/Kyiv'); // UTC+2 in November, as the app would boot with
+    config()->set('app.timezone', 'Europe/Kyiv');
+
+    try {
+        // Support's day is UTC: 2026-11-18 starts at 02:00 Kyiv time.
+        $this->travelTo(Carbon\Carbon::parse('2026-11-18 23:00', 'Europe/Kyiv'));
+        conversation(['status' => ConversationStatus::Closed, 'closed_at' => Carbon\Carbon::parse('2026-11-18 01:00', 'Europe/Kyiv')]);
+        conversation(['status' => ConversationStatus::Closed, 'closed_at' => Carbon\Carbon::parse('2026-11-18 03:00', 'Europe/Kyiv')]);
+
+        expect(app(Dashboard::class)->html())->toContain('✅ Closed today: 1');
+    } finally {
+        date_default_timezone_set($default);
+    }
+});
+
 it('lists what could not be delivered on the dashboard, and sends it again on request', function () {
     Queue::fake();
     $anna = conversation(['name' => 'Anna']);
@@ -180,16 +197,21 @@ describe('offline e-mail', function () {
         });
     });
 
-    it('never links a page on another host', function () {
+    it('never links a page on another host, however the URL is dressed up', function (string $page, string $expected) {
         config()->set('threadlive.email_link', 'https://example.com');
-        $conversation = answered(['context' => ['url' => 'https://evil.example.net/login']]);
+        $conversation = answered(['context' => ['url' => $page]]);
         $conversation->messages()->create(['direction' => Direction::Agent, 'body' => 'Hello']);
 
         $this->artisan('threadlive:maintain')->assertSuccessful();
 
-        Mail::assertSent(UnreadReplies::class, fn (UnreadReplies $mail) => str_contains($mail->render(), 'href="https://example.com"')
+        Mail::assertSent(UnreadReplies::class, fn (UnreadReplies $mail) => str_contains($mail->render(), 'href="'.$expected.'"')
             && ! str_contains($mail->render(), 'evil'));
-    });
+    })->with([
+        'another host' => ['https://evil.example.net/login', 'https://example.com'],
+        'a backslash before @' => ['https://evil.example.net\\@example.com/', 'https://example.com/'],
+        'userinfo' => ['https://evil.example.net@example.com/records', 'https://example.com/records'],
+        'backslashes in the path' => ['https://example.com/\\\\other.example.net/x', 'https://example.com/other.example.net/x'],
+    ]);
 
     it('waits, skips what was read, and starts again with the next reply', function () {
         $soon = answered(['last_agent_message_at' => now()->subMinutes(5)]);

@@ -27,12 +27,28 @@ final class ConversationActions
             return false;
         }
 
+        // Only as it was when loaded: a visitor message stored meanwhile
+        // (the auto-close sweep, a manager's slow /close) keeps it open.
+        $attributes = ['status' => ConversationStatus::Closed, 'closed_at' => now(), 'closed_by' => $by];
+        $lastVisitor = $conversation->last_visitor_message_at;
+        $closed = Conversation::query()
+            ->whereKey($conversation->id)
+            ->where('status', $conversation->status)
+            ->when(
+                $lastVisitor === null,
+                fn ($q) => $q->whereNull('last_visitor_message_at'),
+                fn ($q) => $q->where('last_visitor_message_at', $lastVisitor),
+            )
+            ->update($attributes);
+
+        if ($closed === 0) {
+            $conversation->refresh();
+
+            return false;
+        }
+
+        $conversation->forceFill($attributes)->syncOriginal();
         $conversation->messages()->create(['direction' => Direction::System, 'body' => 'Conversation closed']);
-        $conversation->forceFill([
-            'status' => ConversationStatus::Closed,
-            'closed_at' => now(),
-            'closed_by' => $by,
-        ])->save();
 
         SyncTopic::dispatch($conversation->id);
         RefreshDashboard::dispatch();

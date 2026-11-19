@@ -16,15 +16,23 @@ final class FakeTranslator implements Translator
     /** @var list<array{string, string}> text, target */
     public static array $calls = [];
 
+    /** Runs before each translation: to look at the world while it is "in progress". */
+    public static ?\Closure $before = null;
+
     public static function reset(): void
     {
         self::$down = false;
         self::$calls = [];
+        self::$before = null;
     }
 
     public function translate(string $text, string $target, ?string $source = null): ?Translation
     {
         self::$calls[] = [$text, $target];
+
+        if (self::$before !== null) {
+            (self::$before)();
+        }
 
         if (self::$down) {
             throw new RuntimeException('Translator down');
