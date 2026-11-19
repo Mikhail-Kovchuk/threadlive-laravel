@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace Threadlive\Console;
 
 use Illuminate\Console\Command;
-use Threadlive\Contracts\ChatHost;
+use InvalidArgumentException;
+use Threadlive\Telegram\Commands;
 use Threadlive\Telegram\Dashboard;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
@@ -33,7 +34,7 @@ final class SetupCommand extends Command
 
     private bool $ok = true;
 
-    public function handle(TelegramClient $telegram, Dashboard $dashboard, ChatHost $host): int
+    public function handle(TelegramClient $telegram, Dashboard $dashboard, Commands $commands): int
     {
         $bot = $this->bot($telegram);
         if ($bot === null) {
@@ -52,17 +53,22 @@ final class SetupCommand extends Command
         }
 
         $this->rights($telegram, $chatId, $bot);
+        $menu = $this->menu($commands);
         $local = (bool) $this->option('local');
         $url = $local ? null : $this->webhookUrl();
 
-        if (! $this->ok || (! $local && $url === null)) {
+        if (! $this->ok || $menu === null || (! $local && $url === null)) {
             $this->newLine();
             $this->components->error('Fix the above and run php artisan threadlive:setup again.');
 
             return self::FAILURE;
         }
 
-        $this->registerCommands($telegram, $chatId, $host);
+        $telegram->call('setMyCommands', [
+            'commands' => $menu,
+            'scope' => ['type' => 'chat', 'chat_id' => $chatId],
+        ]);
+        $this->pass('Commands', implode(' ', array_map(fn (array $c) => '/'.$c['command'], $menu)));
 
         if ($url !== null) {
             $telegram->call('setWebhook', [
@@ -178,28 +184,29 @@ final class SetupCommand extends Command
     }
 
     /**
-     * The group's "/" menu: /close plus the host's own (ChatHost::commands),
-     * for this group only.
+     * The group's "/" menu: /close plus the app's commands
+     * (config threadlive.commands). Null when the list is wrong.
+     *
+     * @return list<array{command: string, description: string}>|null
      */
-    private function registerCommands(TelegramClient $telegram, string $chatId, ChatHost $host): void
+    private function menu(Commands $commands): ?array
     {
-        $commands = [['command' => 'close', 'description' => 'Close this conversation (in its topic)']];
+        try {
+            $all = $commands->all();
+        } catch (InvalidArgumentException $e) {
+            $this->problem('Commands', $e->getMessage());
 
-        foreach ($host->commands() as $name => $description) {
-            if (preg_match('/^[a-z0-9_]{1,32}$/', $name) !== 1 || $name === 'close') {
-                $this->components->warn("Command “{$name}” skipped: lowercase letters, digits and _ only, up to 32, not “close”.");
-
-                continue;
-            }
-            $commands[] = ['command' => $name, 'description' => mb_substr($description !== '' ? $description : $name, 0, 256)];
+            return null;
         }
 
-        $telegram->call('setMyCommands', [
-            'commands' => $commands,
-            'scope' => ['type' => 'chat', 'chat_id' => $chatId],
-        ]);
+        $menu = [['command' => 'close', 'description' => 'Close this conversation (in its topic)']];
 
-        $this->pass('Commands', implode(' ', array_map(fn (array $c) => '/'.$c['command'], $commands)));
+        foreach ($all as $name => $command) {
+            $description = trim($command->description());
+            $menu[] = ['command' => $name, 'description' => mb_substr($description !== '' ? $description : $name, 0, 256)];
+        }
+
+        return $menu;
     }
 
     private function webhookUrl(): ?string

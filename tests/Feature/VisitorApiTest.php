@@ -20,10 +20,17 @@ describe('bootstrap', function () {
             'hours' => ['from' => '09:00', 'to' => '23:00', 'tz' => 'UTC'],
             'can_write' => true,
             'poll_ms' => ['open' => 3000, 'closed' => 30000, 'idle' => 15000, 'idle_after' => 300000],
+            'topics' => [],
             'max_message_length' => 2000,
             'agent_display_name' => 'Support',
             'conversation' => null,
         ]);
+    });
+
+    it('serves the first screen\'s topics from the config, so changing them needs no frontend release', function () {
+        config()->set('threadlive.topics', ['Billing', '  ', 'Something else', 42]);
+
+        $this->getJson('/threadlive/bootstrap')->assertJsonPath('topics', ['Billing', 'Something else']);
     });
 
     it('is offline outside support hours, in their time zone', function () {

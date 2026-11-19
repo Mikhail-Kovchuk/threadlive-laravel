@@ -9,6 +9,7 @@ use Threadlive\Models\Conversation;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\Topics;
 use Threadlive\Tests\Fixtures\FakeChatHost;
+use Threadlive\Tests\Fixtures\LookupCommand;
 
 /** A message from a manager in General (no topic). */
 function generalMessage(string $text, int $messageId = 6000, ?int $replyTo = null): array
@@ -27,26 +28,27 @@ function generalMessage(string $text, int $messageId = 6000, ?int $replyTo = nul
     return $message;
 }
 
-beforeEach(function () {
-    FakeChatHost::$commands = ['order' => 'Look up an order by its code'];
-    FakeChatHost::$runCommand = fn (string $command, string $code) => $code === 'DE-1'
-        ? [
-            'title' => 'Order DE-1',
-            'lines' => [['label' => 'Status', 'value' => 'Paid'], ['label' => 'Client', 'value' => 'anna@example.com']],
-            'url' => 'https://admin.example.com/orders/DE-1',
-        ]
-        : null;
-});
+function localSetupTelegram(): void
+{
+    url()->forceRootUrl('http://127.0.0.1:8020');
+    fakeTelegram([
+        'getMe' => ['id' => 123, 'is_bot' => true, 'username' => 'support_test_bot'],
+        'getChat' => ['id' => -1001234567890, 'title' => 'Support', 'type' => 'supergroup', 'is_forum' => true],
+        'getChatMember' => ['status' => 'administrator', 'can_manage_topics' => true, 'can_delete_messages' => true, 'can_pin_messages' => true],
+    ]);
+}
+
+beforeEach(fn () => config()->set('threadlive.commands', [LookupCommand::class]));
 
 describe('manager commands', function () {
-    it('answers /order with the host\'s summary and the admin link, as a reply', function () {
+    it('answers with what the app\'s command returns, as a reply', function () {
         fakeTelegram();
 
-        telegramUpdate(['message' => generalMessage('/order DE-1')])->assertOk();
+        telegramUpdate(['message' => generalMessage('/lookup A-1')])->assertOk();
 
         $answer = telegramCalls('sendMessage')[0];
-        expect($answer['text'])->toBe("<b>Order DE-1</b>\n• Status: Paid\n• Client: anna@example.com\n"
-            .'🛠 <a href="https://admin.example.com/orders/DE-1">Open in the admin panel</a>')
+        expect($answer['text'])->toBe("<b>Record A-1</b>\n• Status: Active\n• Owner: anna@example.com\n"
+            .'🛠 <a href="https://admin.example.com/records/1">Open in the admin panel</a>')
             ->and($answer['reply_parameters']['message_id'])->toBe(6000)
             ->and($answer)->not->toHaveKey('message_thread_id');
     });
@@ -54,22 +56,22 @@ describe('manager commands', function () {
     it('says when nothing matches', function () {
         fakeTelegram();
 
-        telegramUpdate(['message' => generalMessage('/order NOPE')]);
+        telegramUpdate(['message' => generalMessage('/lookup NOPE')]);
 
         expect(telegramCalls('sendMessage')[0]['text'])->toBe('Nothing found for “NOPE”.');
     });
 
-    it('asks for the code when it is missing, and answers the reply', function () {
+    it('asks for the argument when it is missing, and answers the reply', function () {
         fakeTelegram(['sendMessage' => fn (array $params, int $nth) => ['message_id' => 900 + $nth]]);
 
-        telegramUpdate(['message' => generalMessage('/order')]);
+        telegramUpdate(['message' => generalMessage('/lookup')]);
         $prompt = telegramCalls('sendMessage')[0];
         expect($prompt['reply_markup']['force_reply'])->toBeTrue()
-            ->and($prompt['text'])->toContain('Look up an order by its code');
+            ->and($prompt['text'])->toContain('Look up a record by its code');
 
-        telegramUpdate(['message' => generalMessage('DE-1', 6001, replyTo: 901)]);
+        telegramUpdate(['message' => generalMessage('A-1', 6001, replyTo: 901)]);
 
-        expect(telegramCalls('sendMessage')[1]['text'])->toStartWith('<b>Order DE-1</b>');
+        expect(telegramCalls('sendMessage')[1]['text'])->toStartWith('<b>Record A-1</b>');
     });
 
     it('never passes a command written in a topic on to the visitor', function () {
@@ -78,15 +80,15 @@ describe('manager commands', function () {
         $conversation = Conversation::query()->firstOrFail();
         $conversation->forceFill(['telegram_thread_id' => 300, 'topic_state' => TopicState::Open])->save();
 
-        telegramUpdate(['message' => managerMessage(300, '/order DE-1')]);
+        telegramUpdate(['message' => managerMessage(300, '/lookup A-1')]);
         telegramUpdate(['message' => managerMessage(300, '/unknown', 5001)]);
 
         expect($conversation->messages()->where('direction', Direction::Agent)->count())->toBe(0)
             ->and(telegramCalls('sendMessage')[0]['message_thread_id'])->toBe(300)
-            ->and(telegramCalls('sendMessage')[1]['text'])->toContain('Unknown command /unknown. Try /order.');
+            ->and(telegramCalls('sendMessage')[1]['text'])->toContain('Unknown command /unknown. Try /lookup.');
     });
 
-    it('leaves /close to the topic, and commands for other bots alone', function () {
+    it('leaves commands for other bots alone', function () {
         fakeTelegram();
 
         telegramUpdate(['message' => generalMessage('/start@SomeOtherBot')]);
@@ -94,23 +96,53 @@ describe('manager commands', function () {
         expect(telegramCalls('sendMessage'))->toBeEmpty();
     });
 
-    it('lists the commands in the group\'s menu on setup', function () {
-        url()->forceRootUrl('http://127.0.0.1:8020');
-        fakeTelegram([
-            'getMe' => ['id' => 123, 'is_bot' => true, 'username' => 'support_test_bot'],
-            'getChat' => ['id' => -1001234567890, 'title' => 'Support', 'type' => 'supergroup', 'is_forum' => true],
-            'getChatMember' => ['status' => 'administrator', 'can_manage_topics' => true, 'can_delete_messages' => true, 'can_pin_messages' => true],
-        ]);
+    it('puts the app\'s commands in the group\'s menu on setup', function () {
+        localSetupTelegram();
 
         $this->artisan('threadlive:setup', ['--local' => true])->assertSuccessful();
 
         expect(telegramCalls('setMyCommands')[0])->toMatchArray([
             'commands' => [
                 ['command' => 'close', 'description' => 'Close this conversation (in its topic)'],
-                ['command' => 'order', 'description' => 'Look up an order by its code'],
+                ['command' => 'lookup', 'description' => 'Look up a record by its code'],
             ],
             'scope' => ['type' => 'chat', 'chat_id' => '-1001234567890'],
         ]);
+    });
+
+    it('names a wrong entry in the commands list on setup', function () {
+        localSetupTelegram();
+        config()->set('threadlive.commands', ['App\\Threadlive\\Commands\\MissingCommand']);
+
+        $this->artisan('threadlive:setup', ['--local' => true])
+            ->expectsOutputToContain('MissingCommand')
+            ->assertFailed();
+
+        expect(telegramCalls('setMyCommands'))->toBeEmpty();
+    });
+});
+
+describe('threadlive:make-command', function () {
+    beforeEach(fn () => cleanInstall());
+    afterEach(fn () => cleanInstall());
+
+    it('creates the class and lists it in the published config', function () {
+        $this->artisan('threadlive:install', ['--no-migrate' => true])->assertSuccessful();
+
+        $this->artisan('threadlive:make-command', ['name' => 'Invoice'])->assertSuccessful();
+        $this->artisan('threadlive:make-command', ['name' => 'customer-account'])->assertSuccessful();
+
+        $class = file_get_contents(app_path('Threadlive/Commands/InvoiceCommand.php'));
+        expect($class)->toContain('class InvoiceCommand implements ManagerCommand')
+            ->and($class)->toContain("return 'invoice';")
+            ->and(app_path('Threadlive/Commands/CustomerAccountCommand.php'))->toBeFile()
+            ->and(file_get_contents(config_path('threadlive.php')))->toContain(
+                "'commands' => [\n        App\\Threadlive\\Commands\\CustomerAccountCommand::class,\n        App\\Threadlive\\Commands\\InvoiceCommand::class,\n    ],"
+            );
+    });
+
+    it('refuses a name Telegram would not take', function () {
+        $this->artisan('threadlive:make-command', ['name' => 'Close'])->assertFailed();
     });
 });
 

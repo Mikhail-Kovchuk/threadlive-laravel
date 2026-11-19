@@ -54,14 +54,4 @@ class GuardChatHost implements ChatHost
     {
         return null;
     }
-
-    public function commands(): array
-    {
-        return [];
-    }
-
-    public function runCommand(string $command, string $argument): ?array
-    {
-        return null;
-    }
 }

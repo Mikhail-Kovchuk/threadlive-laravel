@@ -6,7 +6,7 @@ namespace Threadlive\Telegram;
 
 use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Support\Str;
-use Threadlive\Contracts\ChatHost;
+use Threadlive\Contracts\ManagerCommand;
 use Threadlive\Enums\ConversationStatus;
 use Threadlive\Enums\Direction;
 use Threadlive\Events\AgentReplied;
@@ -23,7 +23,7 @@ use Threadlive\Support\ConversationActions;
  *   /close                   → closes the conversation and the topic
  *   an edited reply          → the visitor sees the new text
  *   🙋 Take / ✅ Close        → assign / close
- *   /order DE-1 (anywhere)   → the host's answer (ChatHost::runCommand), managers only
+ *   /name argument (anywhere) → the app's ManagerCommand answers, managers only
  *
  * Anything else — other chats, bots (this one included), the General
  * topic, service messages, media (phase 2) — is ignored.
@@ -37,7 +37,7 @@ final class UpdateHandler
 
     public function __construct(
         private readonly TelegramClient $telegram,
-        private readonly ChatHost $host,
+        private readonly Commands $commands,
         private readonly Cache $cache,
     ) {}
 
@@ -257,9 +257,9 @@ final class UpdateHandler
     }
 
     /**
-     * "/order DE-1", "/order" (the bot asks for the code), or the reply to
-     * that question. True when the message was a command, handled or not: it
-     * is never passed on to a visitor. /close is the topic's own (false here).
+     * "/lookup A-1", "/lookup" (the bot asks for the argument), or the reply
+     * to that question. True when the message was a command, handled or not:
+     * it is never passed on to a visitor. /close is the topic's own (false).
      *
      * @param  array<mixed>  $message
      */
@@ -270,7 +270,10 @@ final class UpdateHandler
 
         if (is_string($waiting)) {
             $this->cache->forget(self::PROMPT_KEY.$repliedTo);
-            $this->answerCommand($message, $waiting, $text);
+            $command = $this->commands->all()[$waiting] ?? null;
+            if ($command !== null) {
+                $this->answerCommand($message, $command, $text);
+            }
 
             return true;
         }
@@ -284,7 +287,7 @@ final class UpdateHandler
             return false;
         }
 
-        $commands = $this->host->commands();
+        $commands = array_map(fn (ManagerCommand $c) => $c->description(), $all = $this->commands->all());
 
         if (! array_key_exists($name, $commands)) {
             // "/start@SomeOtherBot" is someone else's; a bare one is ours.
@@ -314,7 +317,7 @@ final class UpdateHandler
             return true;
         }
 
-        $this->answerCommand($message, $name, $argument);
+        $this->answerCommand($message, $all[$name], $argument);
 
         return true;
     }
@@ -322,36 +325,20 @@ final class UpdateHandler
     /**
      * @param  array<mixed>  $message
      */
-    private function answerCommand(array $message, string $command, string $argument): void
+    private function answerCommand(array $message, ManagerCommand $command, string $argument): void
     {
         try {
-            $result = $this->host->runCommand($command, $argument);
+            $reply = $command->handle(trim($argument));
         } catch (\Throwable $e) {
             report($e);
-            $this->replyTo($message, 'The lookup failed; the details are in the application log.');
+            $this->replyTo($message, '/'.e($command->name()).' failed; the details are in the application log.');
 
             return;
         }
 
-        if ($result === null) {
-            $this->replyTo($message, 'Nothing found for “'.e($argument).'”.');
-
-            return;
-        }
-
-        $lines = ['<b>'.e($result['title']).'</b>'];
-        foreach ($result['lines'] ?? [] as $line) {
-            $formatted = VisitorCard::line($line);
-            if ($formatted !== null) {
-                $lines[] = $formatted;
-            }
-        }
-        $url = VisitorCard::webUrl($result['url'] ?? null);
-        if ($url !== null) {
-            $lines[] = '🛠 <a href="'.e($url).'">Open in the admin panel</a>';
-        }
-
-        $this->replyTo($message, implode("\n", $lines));
+        $this->replyTo($message, $reply === null
+            ? 'Nothing found for “'.e(trim($argument)).'”.'
+            : $reply->toHtml());
     }
 
     /**

@@ -16,6 +16,7 @@ use InvalidArgumentException;
 use Threadlive\Console\InstallCommand;
 use Threadlive\Console\ListenCommand;
 use Threadlive\Console\MaintainCommand;
+use Threadlive\Console\MakeCommandCommand;
 use Threadlive\Console\PruneCommand;
 use Threadlive\Console\SetupCommand;
 use Threadlive\Console\StatusCommand;
@@ -100,6 +101,7 @@ class ThreadliveServiceProvider extends ServiceProvider
             $this->commands([
                 InstallCommand::class,
                 ListenCommand::class,
+                MakeCommandCommand::class,
                 SetupCommand::class,
                 StatusCommand::class,
                 TestCommand::class,

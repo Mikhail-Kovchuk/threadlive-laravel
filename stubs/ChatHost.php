@@ -13,6 +13,9 @@ use Threadlive\Host\GuardChatHost;
  *
  * The parent reads the signed-in user from config('threadlive.guard') (null:
  * the default guard) and adds nothing else. Change what you need below.
+ *
+ * Commands for your managers (/something in the support group) are classes
+ * of their own: php artisan threadlive:make-command Name.
  */
 class ChatHost extends GuardChatHost
 {
@@ -25,7 +28,7 @@ class ChatHost extends GuardChatHost
      */
     public function cardLines(Request $request, ?ChatUser $user, array $client): array
     {
-        // e.g. [['label' => 'Orders', 'value' => '12', 'url' => url('/admin/orders?user='.$user?->id)]]
+        // e.g. [['label' => 'Plan', 'value' => 'Pro', 'url' => url("/admin/users/{$user?->id}/billing")]]
         return parent::cardLines($request, $user, $client);
     }
 
@@ -38,38 +41,13 @@ class ChatHost extends GuardChatHost
 
     /**
      * What the VISITOR sees the conversation is about, as a card above their
-     * message — e.g. "About order DE-260826-WA · Germany". Null for none.
-     * Codes only, never an internal id: the visitor sees it.
+     * message — from what the page sent. Null for none. Public codes only,
+     * never an internal id: the visitor sees it.
      */
     public function contextLine(Request $request, ?ChatUser $user, array $client): ?string
     {
-        // e.g. isset($client['attributes']['order']) ? 'About order '.$client['attributes']['order'] : null
+        // e.g. the page passes getContext={() => ({ invoice: 'INV-1042' })}:
+        //   isset($client['attributes']['invoice']) ? 'About invoice '.$client['attributes']['invoice'] : null
         return parent::contextLine($request, $user, $client);
-    }
-
-    /**
-     * Commands for your managers in the support group, shown in its menu
-     * (run threadlive:setup again after changing them).
-     */
-    public function commands(): array
-    {
-        // e.g. ['order' => 'Look up an order by its code']
-        return parent::commands();
-    }
-
-    /**
-     * The answer to "/order DE-260826-WA" in the group — managers only.
-     * Null when nothing matches.
-     */
-    public function runCommand(string $command, string $argument): ?array
-    {
-        // e.g. if ($command === 'order' && $order = Order::where('code', $argument)->first()) {
-        //     return [
-        //         'title' => "Order {$order->code}",
-        //         'lines' => [['label' => 'Status', 'value' => $order->status], ['label' => 'Client', 'value' => $order->user->email]],
-        //         'url' => url("/admin/orders/{$order->code}"),
-        //     ];
-        // }
-        return parent::runCommand($command, $argument);
     }
 }

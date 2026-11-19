@@ -81,6 +81,15 @@ return [
     |
     */
 
+    /*
+    | Commands for the managers in the support group ("/" menu), each a class
+    | implementing Threadlive\Contracts\ManagerCommand — what they look up is
+    | up to you. php artisan threadlive:make-command Name creates one and
+    | adds it here; run threadlive:setup after changing the list.
+    */
+
+    'commands' => [],
+
     'claim_button' => env('THREADLIVE_CLAIM_BUTTON', true),
     'assign_on_first_reply' => env('THREADLIVE_ASSIGN_ON_FIRST_REPLY', true),
     'show_agent_name' => env('THREADLIVE_SHOW_AGENT_NAME', true),
@@ -118,6 +127,14 @@ return [
     // is not closed and had activity within this many hours. Replies to any
     // other still arrive with the next page load.
     'live_hours' => (int) env('THREADLIVE_LIVE_HOURS', 24),
+
+    // Buttons on the widget's first screen; pressing one sends it as the
+    // visitor's first message. Empty: no buttons.
+    'topics' => [
+        // 'A question about my account',
+        // 'Billing',
+        // 'Something else',
+    ],
 
     'max_message_length' => (int) env('THREADLIVE_MAX_MESSAGE_LENGTH', 2000),
 

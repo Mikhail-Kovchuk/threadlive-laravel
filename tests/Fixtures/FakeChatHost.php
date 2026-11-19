@@ -16,32 +16,13 @@ final class FakeChatHost implements ChatHost
     /** @var (callable(array<string, mixed>): ?string)|null */
     public static $contextLine = null;
 
-    /** @var array<string, string> */
-    public static array $commands = [];
-
-    /** @var (callable(string, string): ?array<string, mixed>)|null */
-    public static $runCommand = null;
-
     public static ?string $adminUrl = null;
 
     public static function reset(): void
     {
         self::$user = null;
         self::$contextLine = null;
-        self::$commands = [];
-        self::$runCommand = null;
         self::$adminUrl = null;
-    }
-
-    public function commands(): array
-    {
-        return self::$commands;
-    }
-
-    public function runCommand(string $command, string $argument): ?array
-    {
-        /** @var array{title: string, lines?: list<array{label: string, value: string, url?: string}>, url?: string}|null */
-        return self::$runCommand === null ? null : (self::$runCommand)($command, $argument);
     }
 
     public function user(Request $request): ?ChatUser

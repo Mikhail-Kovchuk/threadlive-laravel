@@ -1,17 +1,5 @@
 <?php
 
-use Illuminate\Filesystem\Filesystem;
-
-// install writes into Testbench's application skeleton: leave it as found.
-function cleanInstall(): void
-{
-    $files = new Filesystem;
-    $files->delete(config_path('threadlive.php'));
-    $files->deleteDirectory(app_path('Threadlive'));
-    $files->delete($files->glob(database_path('migrations/*_create_threadlive_tables.php')));
-    $files->delete(base_path('.env.threadlive-test'));
-}
-
 beforeEach(fn () => cleanInstall());
 afterEach(fn () => cleanInstall());
 

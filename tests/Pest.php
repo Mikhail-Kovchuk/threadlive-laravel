@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
@@ -9,6 +10,19 @@ use Illuminate\Testing\TestResponse;
 use Threadlive\Tests\TestCase;
 
 pest()->extend(TestCase::class)->in('Feature', 'Unit');
+
+/**
+ * threadlive:install and threadlive:make-command write into Testbench's
+ * application skeleton. Leave it as found: a migration left behind there
+ * would be run twice by every later test.
+ */
+function cleanInstall(): void
+{
+    $files = new Filesystem;
+    $files->delete(config_path('threadlive.php'));
+    $files->deleteDirectory(app_path('Threadlive'));
+    $files->delete($files->glob(database_path('migrations/*_create_threadlive_tables.php')));
+}
 
 /**
  * POST a visitor message as the widget would.

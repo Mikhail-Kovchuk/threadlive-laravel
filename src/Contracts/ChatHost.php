@@ -21,7 +21,7 @@ interface ChatHost
 
     /**
      * Extra lines for the visitor card posted in the topic, for the managers,
-     * e.g. "12 orders", "Order DE-260826-WA · Germany · Skrill". Plain text;
+     * e.g. "Plan: Pro", "Invoice INV-1042 · unpaid". Plain text;
      * the package escapes it.
      *
      * @param  array{url?: string, title?: string, attributes?: array<string, string>}  $client  what the widget sent
@@ -34,28 +34,10 @@ interface ChatHost
 
     /**
      * One line the VISITOR sees about what the conversation is about from
-     * here on, e.g. "About order DE-260826-WA · Germany · Skrill", or null.
+     * here on, e.g. "About invoice INV-1042", or null.
      * Plain text. Codes only — never an internal id.
      *
      * @param  array{url?: string, title?: string, attributes?: array<string, string>}  $client  what the widget sent
      */
     public function contextLine(Request $request, ?ChatUser $user, array $client): ?string;
-
-    /**
-     * Commands for the managers in the support group, listed in the group's
-     * menu by threadlive:setup: e.g. ['order' => 'Look up an order by its
-     * code']. Names: lowercase letters, digits and _, up to 32.
-     *
-     * @return array<string, string> name => description
-     */
-    public function commands(): array;
-
-    /**
-     * The answer to "/{command} {argument}" in the group, or null when
-     * nothing matches. Plain text; the package escapes it. Only managers see
-     * it — never the visitor.
-     *
-     * @return array{title: string, lines?: list<array{label: string, value: string, url?: string}>, url?: string}|null
-     */
-    public function runCommand(string $command, string $argument): ?array;
 }

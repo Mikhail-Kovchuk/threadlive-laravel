@@ -55,6 +55,10 @@ final class VisitorController
                 'idle' => (int) ($pollMs['idle'] ?? 15000),
                 'idle_after' => (int) ($pollMs['idle_after'] ?? 300000),
             ],
+            'topics' => array_values(array_filter(
+                (array) config('threadlive.topics', []),
+                fn ($topic) => is_string($topic) && trim($topic) !== '',
+            )),
             'max_message_length' => $this->maxLength(),
             'agent_display_name' => (string) config('threadlive.agent_display_name', 'Support'),
             'conversation' => $visitor->conversation ? $this->conversationJson($visitor->conversation) : null,
