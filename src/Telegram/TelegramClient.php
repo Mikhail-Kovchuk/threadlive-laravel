@@ -18,10 +18,11 @@ final class TelegramClient
 
     /**
      * @param  array<string, mixed>  $params  null values are left out
+     * @param  int  $timeout  seconds; longer for getUpdates, which holds the request open
      *
      * @throws TelegramException
      */
-    public function call(string $method, array $params = []): mixed
+    public function call(string $method, array $params = [], int $timeout = 20): mixed
     {
         if ($this->token === '') {
             throw new TelegramException('THREADLIVE_BOT_TOKEN is not set.');
@@ -30,7 +31,7 @@ final class TelegramClient
         $response = $this->http
             ->acceptJson()
             ->asJson()
-            ->timeout(20)
+            ->timeout($timeout)
             ->post(self::API."/bot{$this->token}/{$method}", array_filter($params, fn ($value) => $value !== null));
 
         $data = $response->json();

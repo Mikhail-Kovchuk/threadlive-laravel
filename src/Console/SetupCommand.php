@@ -13,10 +13,14 @@ use Threadlive\Telegram\TelegramException;
  * Checks the bot and the group, says exactly what is wrong, and — when
  * nothing is — sets the webhook and posts the dashboard. Safe to run again
  * at any time.
+ *
+ * --local skips the webhook (no public HTTPS address on a development
+ * machine): updates then come in through threadlive:listen.
  */
 final class SetupCommand extends Command
 {
-    protected $signature = 'threadlive:setup';
+    protected $signature = 'threadlive:setup
+        {--local : Check the bot and the group but set no webhook; receive updates with threadlive:listen}';
 
     protected $description = 'Check the Telegram bot and group, set the webhook, post the dashboard';
 
@@ -47,21 +51,26 @@ final class SetupCommand extends Command
         }
 
         $this->rights($telegram, $chatId, $bot);
-        $url = $this->webhookUrl();
+        $local = (bool) $this->option('local');
+        $url = $local ? null : $this->webhookUrl();
 
-        if (! $this->ok || $url === null) {
+        if (! $this->ok || (! $local && $url === null)) {
             $this->newLine();
             $this->components->error('Fix the above and run php artisan threadlive:setup again.');
 
             return self::FAILURE;
         }
 
-        $telegram->call('setWebhook', [
-            'url' => $url,
-            'secret_token' => (string) config('threadlive.webhook_secret'),
-            'allowed_updates' => ['message', 'edited_message', 'callback_query'],
-        ]);
-        $this->pass('Webhook', $url);
+        if ($url !== null) {
+            $telegram->call('setWebhook', [
+                'url' => $url,
+                'secret_token' => (string) config('threadlive.webhook_secret'),
+                'allowed_updates' => ['message', 'edited_message', 'callback_query'],
+            ]);
+            $this->pass('Webhook', $url);
+        } else {
+            $this->pass('Webhook', 'none (local): updates come through threadlive:listen');
+        }
 
         $dashboard->refresh();
         $this->pass('Dashboard', 'posted in General');
@@ -70,7 +79,9 @@ final class SetupCommand extends Command
         if (! config('threadlive.enabled')) {
             $this->components->warn('Set THREADLIVE_ENABLED=true to show the widget.');
         }
-        $this->components->info('Telegram is set up. Try it: php artisan threadlive:test');
+        $this->components->info($local
+            ? 'Telegram is set up for local work. Keep php artisan threadlive:listen and a queue worker running.'
+            : 'Telegram is set up. Try it: php artisan threadlive:test');
 
         return self::SUCCESS;
     }
