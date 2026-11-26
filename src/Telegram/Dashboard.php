@@ -16,6 +16,7 @@ use Threadlive\Support\WorkingHours;
  *
  *   ❗ Waiting for a reply (3): Anna · 12m, John · 4m
  *   💬 In progress (8): Maria — 5, Olesya — 3
+ *   🤖 With the assistant (4)            (only when there are any)
  *   ✅ Closed today: 21
  *
  * Its id is kept in the cache; with the cache lost, a new one is posted.
@@ -79,10 +80,12 @@ final class Dashboard
         $tz = WorkingHours::fromConfig()->tz;
         $now = Carbon::now($tz);
 
-        // Counted in the database; only the names shown are loaded.
-        $waitingCount = Conversation::query()->where('status', ConversationStatus::Waiting)->count();
+        // Counted in the database; only the names shown are loaded. The
+        // assistant's conversations are not the managers' to answer yet.
+        $waitingCount = Conversation::query()->where('status', ConversationStatus::Waiting)->where('handler', Conversation::HUMAN)->count();
         $waiting = Conversation::query()
             ->where('status', ConversationStatus::Waiting)
+            ->where('handler', Conversation::HUMAN)
             ->orderBy('last_visitor_message_at')
             ->limit(self::WAITING_SHOWN)
             ->get();
@@ -92,8 +95,13 @@ final class Dashboard
             $link = self::topicLink($c);
             $label = $link ? '<a href="'.e($link).'">'.$name.'</a>' : $name;
 
-            return $label.' · '.self::age($c->last_visitor_message_at, $now);
+            return $label.' · '.self::age(self::waitingSince($c), $now);
         })->implode(', ');
+
+        $withAssistant = Conversation::query()
+            ->where('status', '!=', ConversationStatus::Closed)
+            ->where('handler', Conversation::AI)
+            ->count();
 
         if ($waitingCount > self::WAITING_SHOWN) {
             $shown .= ', …';
@@ -102,6 +110,7 @@ final class Dashboard
         /** @var array<string, int> $byAssignee */
         $byAssignee = Conversation::query()
             ->where('status', ConversationStatus::Answered)
+            ->where('handler', Conversation::HUMAN)
             ->groupBy('assignee_name')
             ->selectRaw('assignee_name, count(*) as total')
             ->toBase()
@@ -123,6 +132,7 @@ final class Dashboard
             '',
             "❗ Waiting for a reply ({$waitingCount})".($shown !== '' ? ': '.$shown : ''),
             "💬 In progress ({$answered})".($inProgress !== '' ? ': '.$inProgress : ''),
+            $withAssistant > 0 ? "🤖 With the assistant ({$withAssistant})" : null,
             "✅ Closed today: {$closedToday}",
             $this->notDelivered(),
         ], fn (?string $line) => $line !== null));
@@ -171,6 +181,18 @@ final class Dashboard
         }
 
         return 'https://t.me/c/'.substr($chatId, 4).'/'.$conversation->telegram_thread_id;
+    }
+
+    /**
+     * Since when the managers owe a reply: the visitor's last message, or
+     * the assistant's handoff when that came later.
+     */
+    public static function waitingSince(Conversation $conversation): ?Carbon
+    {
+        $visitor = $conversation->last_visitor_message_at;
+        $handoff = $conversation->handed_off_at;
+
+        return $handoff !== null && ($visitor === null || $handoff->gt($visitor)) ? $handoff : $visitor;
     }
 
     public static function age(?Carbon $since, Carbon $now): string

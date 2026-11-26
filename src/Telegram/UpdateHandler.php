@@ -6,6 +6,7 @@ namespace Threadlive\Telegram;
 
 use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Support\Str;
+use Threadlive\Assistant\AssistantService;
 use Threadlive\Contracts\ManagerCommand;
 use Threadlive\Enums\ConversationStatus;
 use Threadlive\Enums\Direction;
@@ -31,7 +32,9 @@ use Threadlive\Translation\TranslationService;
  *   /close                   → closes the conversation and the topic
  *   an edited reply          → the visitor sees the new text
  *   🙋 Take / ✅ Close        → assign / close
- *   ⚙️ Actions, /menu         → buttons for translation and the app's commands
+ *   ⚙️ Actions, /menu         → buttons for translation, the assistant and the app's commands
+ *   /ai on|off               → the assistant answers this conversation, or the managers do
+ *                              (any manager reply takes it from the assistant too)
  *   /faq (anywhere)          → the FAQ file; a faq.json with that caption replaces it
  *   /find what (anywhere)    → conversations by #number, e-mail, name or words
  *   /name argument (anywhere) → the app's ManagerCommand answers, managers only
@@ -55,6 +58,7 @@ final class UpdateHandler
         private readonly Cache $cache,
         private readonly TranslationService $translation,
         private readonly ActionPanel $panel,
+        private readonly AssistantService $assistant,
     ) {}
 
     /**
@@ -107,11 +111,22 @@ final class UpdateHandler
         }
 
         $thread = $message['message_thread_id'] ?? null;
-        if (! is_int($thread) || ($message['is_topic_message'] ?? false) !== true) {
+        $inTopic = is_int($thread) && ($message['is_topic_message'] ?? false) === true;
+        $conversation = $inTopic ? Conversation::query()->where('telegram_thread_id', $thread)->first() : null;
+
+        // /menu, /close, /translate, /ai act on a conversation: in General
+        // (or a topic of no conversation) they would do nothing, silently.
+        if (! $edited && $conversation === null && is_string($text) && is_int($message['message_id'] ?? null)
+            && preg_match('/^\/('.implode('|', Commands::TOPIC_OWN).')(@\w+)?(\s|$)/i', trim($text), $own) === 1) {
+            $this->replyTo($message, '/'.strtolower($own[1]).' works in the topic of a conversation — open the visitor\'s topic '
+                .'(the dashboard links them) and send it there.');
+
             return;
         }
 
-        $conversation = Conversation::query()->where('telegram_thread_id', $thread)->first();
+        if (! $inTopic) {
+            return;
+        }
         // A photo or document carries its text as a caption.
         $text = $message['text'] ?? $message['caption'] ?? '';
         $hasMedia = is_array($message['photo'] ?? null) || is_array($message['document'] ?? null);
@@ -156,6 +171,12 @@ final class UpdateHandler
 
         if (preg_match('/^\/menu(@\w+)?$/i', $trimmed) === 1) {
             $this->postPanel($conversation, $message);
+
+            return;
+        }
+
+        if (preg_match('/^\/ai(?:@\w+)?(?:\s+(\S+))?$/i', $trimmed, $m) === 1) {
+            $this->replyTo($message, $this->switchAssistant($conversation, strtolower($m[1] ?? ''), $from));
 
             return;
         }
@@ -318,6 +339,11 @@ final class UpdateHandler
     {
         $name = $this->name($from);
 
+        // A manager answering takes the conversation from the assistant.
+        if ($conversation->withAssistant()) {
+            ConversationActions::handOff($conversation, "{$name} took over.", byManager: true);
+        }
+
         if (config('threadlive.assign_on_first_reply', true) && $conversation->assignee_name === null) {
             $this->assign($conversation, $from, onlyIfFree: true);
         }
@@ -428,7 +454,7 @@ final class UpdateHandler
         $from = is_array($query['from'] ?? null) ? $query['from'] : [];
 
         if ($id === null || ! $this->fromOurGroup($message)
-            || preg_match('/^tl:(claim|close|menu|back|tr|cmd):(\d+)(?::([a-z0-9_-]+):([cp]))?$/', $data, $m) !== 1) {
+            || preg_match('/^tl:(claim|close|menu|back|tr|cmd|ai):(\d+)(?::([a-z0-9_-]+):([cp]))?$/', $data, $m) !== 1) {
             return;
         }
 
@@ -463,6 +489,12 @@ final class UpdateHandler
             return;
         }
 
+        if ($m[1] === 'ai') {
+            $this->assistantButton($conversation, $id, $message, $from, $argument, $where);
+
+            return;
+        }
+
         if ($m[1] === 'close') {
             $this->close($conversation);
             $this->answer($id, 'Closed.');
@@ -479,9 +511,67 @@ final class UpdateHandler
         }
 
         $this->assign($conversation, $from);
+        if ($conversation->withAssistant()) {
+            ConversationActions::handOff($conversation, $this->name($from).' took over.', byManager: true);
+        }
         SyncTopic::dispatch($conversation->id);
         RefreshDashboard::dispatch();
         $this->answer($id, 'It’s yours.');
+    }
+
+    /**
+     * /ai on: the assistant answers this conversation (at once, when the
+     * visitor wrote last). /ai off: the managers do. /ai: the other way round.
+     *
+     * @param  array<mixed>  $from
+     * @return string what the topic is told
+     */
+    private function switchAssistant(Conversation $conversation, string $to, array $from): string
+    {
+        $to = $to === '' ? ($conversation->withAssistant() ? 'off' : 'on') : $to;
+
+        if (! in_array($to, ['on', 'off'], true)) {
+            return 'Use /ai on or /ai off.';
+        }
+
+        if ($to === 'off') {
+            return ConversationActions::handOff($conversation, $this->name($from).' switched the assistant off.', byManager: true)
+                ? '🙋 The assistant is off here: you answer this conversation.'
+                : 'The managers answer this conversation already.';
+        }
+
+        if (! $this->assistant->enabled()) {
+            return 'The assistant is not set up: threadlive.assistant.enabled and THREADLIVE_GEMINI_KEY.';
+        }
+
+        if ($conversation->withAssistant()) {
+            return 'The assistant answers this conversation already.';
+        }
+
+        ConversationActions::backToAssistant($conversation);
+
+        return '🤖 The assistant answers this conversation again. Any reply of yours here takes it back.';
+    }
+
+    /**
+     * 🤖 AI answers / 🙋 Managers answer in the menu: /ai on|off, told in
+     * the topic, and the ticks move.
+     *
+     * @param  array<mixed>  $message  the card or panel the button is on
+     * @param  array<mixed>  $from
+     * @param  ActionPanel::ON_*  $where
+     */
+    private function assistantButton(Conversation $conversation, string $callbackId, array $message, array $from, string $argument, string $where): void
+    {
+        $this->answer($callbackId, '');
+
+        $topic = $this->topicOf($conversation);
+        $told = $this->switchAssistant($conversation, $argument, $from);
+        if ($topic !== null) {
+            $this->replyTo($topic, $told);
+        }
+
+        $this->setKeyboard($message, $this->panel->keyboard($conversation->refresh(), $where));
     }
 
     /**

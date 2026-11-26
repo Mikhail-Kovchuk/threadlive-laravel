@@ -4,9 +4,53 @@ All notable changes to `threadlive/threadlive-laravel`. The widget,
 `threadlive-react`, is released with the same version numbers; use the two
 at the same version.
 
-## Unreleased
+## 0.2.0 — 2026-11-26
 
-- **Fixes:** a delivery job lost before it ran no longer blocks the
+- **AI assistant** (`assistant` block, off by default; Google Gemini with
+  `THREADLIVE_GEMINI_KEY`, or your own `Contracts\Assistant` as `driver`).
+  It answers a new or reopened conversation first (`first`: `always` or
+  `off_hours`), from `about` and the whole FAQ (`show: false` entries too:
+  out of the widget, still known to the AI), keeping its facts as written
+  and promising nothing, reading the conversation with its earlier visits
+  marked as such (a close or two hours of silence) and answering the
+  visitor's last message — a "test" or "hi" in the browser's language, with
+  no manager called — after the visitor's message is in
+  the topic; its replies show in the topic silently under 🤖, with the
+  managers' translation. It hands the conversation to the managers —
+  ❗ again, "🙋 Needs a manager" with the reason and a summary, with sound —
+  when it cannot help, when the visitor presses "Talk to a person"
+  (`POST /handoff`), after `max_replies`, past `daily_limit`, or on any
+  error. A manager's reply or 🙋 Take takes over at once; `/ai on|off` and
+  the ⚙️ Actions buttons switch it per conversation. Topics read 🤖, the
+  dashboard counts "🤖 With the assistant", and waiting alerts count from
+  the handoff. The API adds `conversation.handler`,
+  `conversation.assistant_typing` and `message.ai`. `ai` is now a reserved
+  command name.
+- **Managers called by name.** A handoff calls the manager who has the
+  conversation in its topic; with nobody on it, it is also posted in
+  General with a "💬 Open the conversation" button and the usernames of the
+  new `mention` setting (`['@maria']`) — a mention reaches them even in a
+  muted group. Waiting alerts mention them the same way.
+- **The prompt is yours to replace.** The package's is a general one for a
+  website's live chat; `php artisan threadlive:make-prompt` copies it into
+  `app/Threadlive/AssistantPrompt.php`, which replaces it whole from then on
+  (`assistant.prompt` names the class). `PromptContext` gives it who we are
+  (`about`), the time, the hours, the FAQ, the page and the languages; the
+  answer's shape is fixed by the package, so a rewritten prompt cannot
+  break a handoff. `threadlive:assistant show|ask` prints and tries it.
+- **Schema:** a new migration (`handler`, `handed_off_at`,
+  `handoff_reason`, `assistant_replies` on conversations, `by_assistant` on
+  messages). `php artisan threadlive:install` publishes it and runs
+  migrations; run `php artisan threadlive:config` for the `assistant`
+  block, and `threadlive:setup` to list `/ai` in the group.
+- **Fixes:** files reach Telegram with the oldest dependencies allowed
+  (Laravel 12.0 with guzzlehttp/psr7 1.x refused an empty file part).
+  `/menu`, `/close`, `/translate` and `/ai` sent in General (or
+  a topic of no conversation) now say where they work instead of doing
+  nothing. `threadlive:listen` waits for Telegram when it cannot reach it
+  at the start (a timeout, a reset connection) instead of exiting — under
+  `composer dev` that took the server and the queue down with it; a refusal
+  from Telegram (a wrong token) still stops it. A delivery job lost before it ran no longer blocks the
   conversation's later messages (its lock expires after 60 s); the `deepl`
   driver without a key is off instead of failing every translation.
 

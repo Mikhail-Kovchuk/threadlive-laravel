@@ -13,12 +13,14 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
+use Threadlive\Console\AssistantCommand;
 use Threadlive\Console\ConfigCommand;
 use Threadlive\Console\FaqCommand;
 use Threadlive\Console\InstallCommand;
 use Threadlive\Console\ListenCommand;
 use Threadlive\Console\MaintainCommand;
 use Threadlive\Console\MakeCommandCommand;
+use Threadlive\Console\MakePromptCommand;
 use Threadlive\Console\PruneCommand;
 use Threadlive\Console\RetryFailedCommand;
 use Threadlive\Console\SetupCommand;
@@ -28,6 +30,7 @@ use Threadlive\Contracts\ChatHost;
 use Threadlive\Events\VisitorMessageReceived;
 use Threadlive\Events\VisitorSignedIn;
 use Threadlive\Jobs\AnnounceSignIn;
+use Threadlive\Jobs\AnswerWithAssistant;
 use Threadlive\Jobs\DeliverVisitorMessages;
 use Threadlive\Telegram\TelegramClient;
 
@@ -95,6 +98,12 @@ class ThreadliveServiceProvider extends ServiceProvider
 
         // A short delay, so a visitor's burst of messages leaves as one post.
         Event::listen(VisitorMessageReceived::class, function (VisitorMessageReceived $event) {
+            // The assistant answers after the topic has the message; the
+            // widget shows it "typing" from now.
+            if ($event->conversation->withAssistant()) {
+                AnswerWithAssistant::typing($event->conversation->id);
+            }
+
             DeliverVisitorMessages::dispatch($event->conversation->id)->delay(now()->addSeconds(self::DELIVERY_DELAY_SECONDS));
         });
 
@@ -121,6 +130,8 @@ class ThreadliveServiceProvider extends ServiceProvider
                 PruneCommand::class,
                 RetryFailedCommand::class,
                 FaqCommand::class,
+                AssistantCommand::class,
+                MakePromptCommand::class,
             ]);
 
             $this->publishes([
@@ -135,9 +146,11 @@ class ThreadliveServiceProvider extends ServiceProvider
             // Published, never loaded from vendor/: the tables are the
             // application's, and a migration run from here would change
             // under it on the next composer update.
-            $this->publishesMigrations([
-                __DIR__.'/../database/migrations/2026_11_18_000000_create_threadlive_tables.php' => database_path('migrations/2026_11_18_000000_create_threadlive_tables.php'),
-            ], 'threadlive-migrations');
+            $migrations = [];
+            foreach (glob(__DIR__.'/../database/migrations/*.php') ?: [] as $migration) {
+                $migrations[$migration] = database_path('migrations/'.basename($migration));
+            }
+            $this->publishesMigrations($migrations, 'threadlive-migrations');
         }
     }
 }

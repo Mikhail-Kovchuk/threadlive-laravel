@@ -41,6 +41,10 @@ use Threadlive\Enums\TopicState;
  * @property Carbon|null $unread_email_sent_at
  * @property Carbon|null $closed_at
  * @property string|null $closed_by
+ * @property string $handler 'ai' (the assistant answers) or 'human'
+ * @property Carbon|null $handed_off_at
+ * @property string|null $handoff_reason
+ * @property int $assistant_replies
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
@@ -53,7 +57,18 @@ class Conversation extends Model
     protected $attributes = [
         'status' => 'waiting',
         'topic_state' => 'none',
+        'handler' => self::HUMAN,
+        'assistant_replies' => 0,
     ];
+
+    public const AI = 'ai';
+
+    public const HUMAN = 'human';
+
+    public function withAssistant(): bool
+    {
+        return $this->handler === self::AI;
+    }
 
     protected function casts(): array
     {
@@ -73,6 +88,8 @@ class Conversation extends Model
             'waiting_alert_sent_at' => 'datetime',
             'unread_email_sent_at' => 'datetime',
             'closed_at' => 'datetime',
+            'handed_off_at' => 'datetime',
+            'assistant_replies' => 'integer',
         ];
     }
 

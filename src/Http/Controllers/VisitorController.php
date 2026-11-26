@@ -15,16 +15,19 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Threadlive\Assistant\AssistantService;
 use Threadlive\Contracts\ChatHost;
 use Threadlive\Enums\ConversationStatus;
 use Threadlive\Enums\Delivery;
 use Threadlive\Enums\Direction;
 use Threadlive\Events\ConversationStarted;
 use Threadlive\Events\VisitorMessageReceived;
+use Threadlive\Jobs\AnswerWithAssistant;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
 use Threadlive\Support\Attachments;
 use Threadlive\Support\ChatLanguage;
+use Threadlive\Support\ConversationActions;
 use Threadlive\Support\Faq;
 use Threadlive\Support\Turnstile;
 use Threadlive\Support\Visitor;
@@ -330,7 +333,18 @@ final class VisitorController
         ]);
 
         $wasWaiting = ! $started && $conversation->status === ConversationStatus::Waiting;
+        $fresh = $started || $conversation->status === ConversationStatus::Closed;
         $now = now();
+
+        // A new or reopened conversation: the assistant's first, when it answers.
+        if ($fresh) {
+            $conversation->forceFill([
+                'handler' => app(AssistantService::class)->answersNew() ? Conversation::AI : Conversation::HUMAN,
+                'handed_off_at' => null,
+                'handoff_reason' => null,
+                'assistant_replies' => 0,
+            ]);
+        }
 
         $conversation->forceFill([
             'status' => ConversationStatus::Waiting,
@@ -448,7 +462,20 @@ final class VisitorController
     }
 
     /**
-     * @return array{status: string, unread: int, email: string|null, active: bool}
+     * "Talk to a person": the assistant's conversation goes to the managers
+     * now. Nothing to do when it is theirs already.
+     */
+    public function handoff(Request $request): JsonResponse
+    {
+        $conversation = $this->conversationOr404($request);
+
+        ConversationActions::handOff($conversation, 'The visitor asked for a person.');
+
+        return response()->json(['conversation' => $this->conversationJson($conversation->refresh())]);
+    }
+
+    /**
+     * @return array{status: string, unread: int, email: string|null, active: bool, handler: string, assistant_typing: bool}
      */
     private function conversationJson(Conversation $conversation): array
     {
@@ -457,6 +484,9 @@ final class VisitorController
             'unread' => $conversation->unreadCount(),
             'email' => $conversation->email,
             'active' => $this->isLive($conversation),
+            // 'ai': the assistant answers — the widget offers "Talk to a person".
+            'handler' => $conversation->withAssistant() ? Conversation::AI : Conversation::HUMAN,
+            'assistant_typing' => $conversation->withAssistant() && AnswerWithAssistant::isTyping($conversation->id),
         ];
     }
 
@@ -471,7 +501,7 @@ final class VisitorController
     }
 
     /**
-     * @return array{id: int, direction: string, body: string, created_at: string|null, author: string|null, client_msg_id?: string|null, attachments?: list<array<string, mixed>>}
+     * @return array{id: int, direction: string, body: string, created_at: string|null, author: string|null, client_msg_id?: string|null, ai?: true, attachments?: list<array<string, mixed>>}
      */
     private function messageJson(Message $message): array
     {
@@ -493,6 +523,12 @@ final class VisitorController
 
         if ($message->direction === Direction::Visitor) {
             $json['client_msg_id'] = $message->client_msg_id;
+        }
+
+        // Written by the AI assistant: the widget marks it so.
+        if ($message->by_assistant) {
+            $json['ai'] = true;
+            $json['author'] = $message->agent_name;
         }
 
         if ($message->attachments !== null && $message->attachments !== []) {

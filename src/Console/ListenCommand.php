@@ -6,6 +6,7 @@ namespace Threadlive\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\Repository as Cache;
+use Illuminate\Support\Sleep;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
 use Threadlive\Telegram\UpdateHandler;
@@ -36,6 +37,9 @@ final class ListenCommand extends Command
 
     private const ERROR_PAUSE = 5;
 
+    /** With --once: how often to try reaching Telegram before giving up. */
+    private const ONCE_TRIES = 3;
+
     public function handle(TelegramClient $telegram, UpdateHandler $handler, Cache $cache): int
     {
         if (! $this->webhookOutOfTheWay($telegram)) {
@@ -58,7 +62,7 @@ final class ListenCommand extends Command
                 if ($this->option('once')) {
                     return self::FAILURE;
                 }
-                sleep(self::ERROR_PAUSE);
+                Sleep::for(self::ERROR_PAUSE)->seconds();
 
                 continue;
             }
@@ -88,12 +92,25 @@ final class ListenCommand extends Command
 
     private function webhookOutOfTheWay(TelegramClient $telegram): bool
     {
-        try {
-            $info = $telegram->call('getWebhookInfo');
-        } catch (TelegramException $e) {
-            $this->components->error($e->getMessage());
+        // Telegram out of reach for a moment is no reason to stop — under
+        // `composer dev` (concurrently --kill-others) it would take the
+        // server and the queue down with it. Telegram saying no (a wrong
+        // token) is. --once gives up after a few tries.
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                $info = $telegram->call('getWebhookInfo');
 
-            return false;
+                break;
+            } catch (TelegramException $e) {
+                $this->components->error($e->getMessage());
+
+                if (! $e->connectionFailed || ($this->option('once') && $attempt >= self::ONCE_TRIES)) {
+                    return false;
+                }
+
+                $this->components->warn('Telegram is out of reach; trying again in '.self::ERROR_PAUSE.' s.');
+                Sleep::for(self::ERROR_PAUSE)->seconds();
+            }
         }
 
         $url = is_array($info) && is_string($info['url'] ?? null) ? $info['url'] : '';

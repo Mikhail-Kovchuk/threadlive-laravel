@@ -15,6 +15,7 @@ use Threadlive\Models\Conversation;
 use Threadlive\Support\ConversationActions;
 use Threadlive\Support\WorkingHours;
 use Threadlive\Telegram\Dashboard;
+use Threadlive\Telegram\Mentions;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
 use Throwable;
@@ -122,10 +123,15 @@ final class MaintainCommand extends Command
         }
 
         $sent = 0;
+        $since = now()->subMinutes($minutes);
         $waiting = Conversation::query()
             ->where('status', ConversationStatus::Waiting)
+            // The assistant's are not waiting for the managers; a handoff
+            // starts the wait.
+            ->where('handler', Conversation::HUMAN)
             ->whereNull('waiting_alert_sent_at')
-            ->where('last_visitor_message_at', '<=', now()->subMinutes($minutes))
+            ->where('last_visitor_message_at', '<=', $since)
+            ->where(fn ($q) => $q->whereNull('handed_off_at')->orWhere('handed_off_at', '<=', $since))
             ->orderBy('last_visitor_message_at')
             ->limit(self::ALERTS_PER_RUN)
             ->get();
@@ -134,11 +140,20 @@ final class MaintainCommand extends Command
             $name = e($conversation->name ?: 'A guest');
             $link = Dashboard::topicLink($conversation);
             $who = $link ? '<a href="'.e($link).'">'.$name.'</a>' : $name;
-            $age = Dashboard::age($conversation->last_visitor_message_at, now());
+            $age = Dashboard::age(Dashboard::waitingSince($conversation), now());
+            // Called by name: the manager who has it, or config('threadlive.mention').
+            $mention = $conversation->assignee_tg_id !== null
+                ? Mentions::user($conversation->assignee_tg_id, (string) ($conversation->assignee_name ?: 'Manager'))
+                : Mentions::fromConfig();
 
             try {
                 // With sound: this is the one General post that should be heard.
-                $telegram->sendMessage((string) config('threadlive.chat_id'), "⏰ {$who} is waiting {$age}", null, silent: false);
+                $telegram->sendMessage(
+                    (string) config('threadlive.chat_id'),
+                    "⏰ {$who} is waiting {$age}".($mention !== '' ? ' — '.$mention : ''),
+                    null,
+                    silent: false,
+                );
             } catch (TelegramException $e) {
                 report($e);
 
@@ -177,8 +192,10 @@ final class MaintainCommand extends Command
 
         $sent = 0;
         foreach ($due as $conversation) {
+            // The managers' replies: the assistant's came while the visitor was there.
             $replies = $conversation->messages()
                 ->where('direction', Direction::Agent)
+                ->where('by_assistant', false)
                 ->where('id', '>', $conversation->visitor_read_message_id ?? 0)
                 ->orderBy('id')
                 ->get();

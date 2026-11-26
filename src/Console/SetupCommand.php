@@ -6,6 +6,7 @@ namespace Threadlive\Console;
 
 use Illuminate\Console\Command;
 use InvalidArgumentException;
+use Threadlive\Assistant\AssistantService;
 use Threadlive\Telegram\Commands;
 use Threadlive\Telegram\Dashboard;
 use Threadlive\Telegram\TelegramClient;
@@ -214,6 +215,10 @@ final class SetupCommand extends Command
                 'command' => 'translate',
                 'description' => 'Translate this conversation: /translate ['.implode('|', $this->translation->languages()).'|off]',
             ];
+        }
+
+        if (app(AssistantService::class)->enabled()) {
+            $menu[] = ['command' => 'ai', 'description' => 'The AI assistant answers this conversation: /ai on|off (in its topic)'];
         }
 
         $menu[] = ['command' => 'faq', 'description' => 'Quick answers: get faq.json; send one with the caption /faq to replace it'];

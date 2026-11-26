@@ -168,3 +168,20 @@ it('posts the panel at the bottom of the topic on /menu, keeping one', function 
 it('does not let an app command take the name menu', function () {
     expect(Commands::RESERVED)->toContain('menu');
 });
+
+it('says where /menu, /close, /translate and /ai work when sent in General', function (string $command, string $name) {
+    fakeTelegram();
+    $message = managerMessage(1, $command);
+    unset($message['message_thread_id'], $message['is_topic_message']);
+
+    telegramUpdate(['message' => $message])->assertOk();
+
+    $reply = telegramCalls('sendMessage')[0];
+    expect($reply['text'])->toContain("/{$name} works in the topic of a conversation")
+        ->and($reply['message_thread_id'] ?? null)->toBeNull();
+})->with([
+    ['/menu@threadlive_bot', 'menu'],
+    ['/close', 'close'],
+    ['/translate en', 'translate'],
+    ['/ai', 'ai'],
+]);

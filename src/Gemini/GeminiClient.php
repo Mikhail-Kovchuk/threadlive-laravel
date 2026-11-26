@@ -24,10 +24,11 @@ final class GeminiClient
         private readonly ?string $thinking = null,
     ) {}
 
-    public static function fromConfig(HttpFactory $http): self
+    /** The `gemini` block; $model in place of its model when given. */
+    public static function fromConfig(HttpFactory $http, ?string $model = null): self
     {
         $thinking = config('threadlive.gemini.thinking');
-        $model = config('threadlive.gemini.model');
+        $model = $model !== null && $model !== '' ? $model : config('threadlive.gemini.model');
 
         return new self(
             $http,

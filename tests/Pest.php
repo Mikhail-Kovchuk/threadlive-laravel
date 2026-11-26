@@ -21,7 +21,7 @@ function cleanInstall(): void
     $files = new Filesystem;
     $files->delete(config_path('threadlive.php'));
     $files->deleteDirectory(app_path('Threadlive'));
-    $files->delete($files->glob(database_path('migrations/*_create_threadlive_tables.php')));
+    $files->delete($files->glob(database_path('migrations/*_threadlive_tables.php')));
 }
 
 /**

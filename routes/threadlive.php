@@ -28,6 +28,7 @@ Route::prefix($prefix)
             Route::post('messages', [VisitorController::class, 'store'])->name('messages.store');
             Route::post('read', [VisitorController::class, 'read'])->name('read');
             Route::post('email', [VisitorController::class, 'email'])->name('email');
+            Route::post('handoff', [VisitorController::class, 'handoff'])->name('handoff');
         });
 
         // Opened by <img> and links in the widget, which cannot send the

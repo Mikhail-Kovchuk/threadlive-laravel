@@ -99,7 +99,10 @@ describe('a guest conversation', function () {
             ->assertJsonPath('message.direction', 'visitor')
             ->assertJsonPath('message.body', 'Hi! Is the withdrawal still pending?')
             ->assertJsonPath('context', null)
-            ->assertJsonPath('conversation', ['status' => 'waiting', 'unread' => 0, 'email' => null, 'active' => true]);
+            ->assertJsonPath('conversation', [
+                'status' => 'waiting', 'unread' => 0, 'email' => null, 'active' => true,
+                'handler' => 'human', 'assistant_typing' => false,
+            ]);
 
         $token = $first->json('visitor_token');
         expect($token)->toBeString()->toHaveLength(48);

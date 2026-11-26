@@ -26,8 +26,6 @@ final class InstallCommand extends Command
 
     protected $description = 'Publish the Threadlive config, migration and ChatHost class, and add the .env keys';
 
-    private const MIGRATION = 'create_threadlive_tables';
-
     public function handle(Filesystem $files, ConfigPublisher $config): int
     {
         $this->components->info('Installing threadlive/threadlive-laravel');
@@ -35,7 +33,7 @@ final class InstallCommand extends Command
         // The host class first: the config is pointed at it once it exists.
         $this->publishHost($files);
         ConfigCommand::report($this, $config->sync((bool) $this->option('force')));
-        $this->publishMigration($files);
+        $this->publishMigrations($files);
         $this->addEnvKeys($files);
 
         $warnings = $this->warnings();
@@ -66,23 +64,31 @@ final class InstallCommand extends Command
     }
 
     /**
-     * Checked by name, not left to vendor:publish, which would add a second
-     * copy with a new date on every run.
+     * Each of the package's migrations the app lacks, in order. Checked by
+     * name, not left to vendor:publish, which would add a second copy with a
+     * new date on every run. A second second per file keeps the order.
      */
-    private function publishMigration(Filesystem $files): void
+    private function publishMigrations(Filesystem $files): void
     {
-        $existing = $files->glob(database_path('migrations/*_'.self::MIGRATION.'.php'));
+        $sources = $files->glob(__DIR__.'/../../database/migrations/*.php');
+        sort($sources);
+        $time = time();
 
-        if ($existing !== []) {
-            $this->components->twoColumnDetail('database/migrations/'.basename($existing[0]), '<fg=yellow>exists, kept</>');
+        foreach ($sources as $source) {
+            $migration = (string) preg_replace('/^\d{4}_\d{2}_\d{2}_\d{6}_/', '', basename($source, '.php'));
+            $existing = $files->glob(database_path('migrations/*_'.$migration.'.php'));
 
-            return;
+            if ($existing !== []) {
+                $this->components->twoColumnDetail('database/migrations/'.basename($existing[0]), '<fg=yellow>exists, kept</>');
+
+                continue;
+            }
+
+            $name = date('Y_m_d_His', $time++).'_'.$migration.'.php';
+            $files->ensureDirectoryExists(database_path('migrations'));
+            $files->copy($source, database_path('migrations/'.$name));
+            $this->components->twoColumnDetail('database/migrations/'.$name, '<fg=green>published</>');
         }
-
-        $name = date('Y_m_d_His').'_'.self::MIGRATION.'.php';
-        $files->ensureDirectoryExists(database_path('migrations'));
-        $files->copy(__DIR__.'/../../database/migrations/2026_11_18_000000_'.self::MIGRATION.'.php', database_path('migrations/'.$name));
-        $this->components->twoColumnDetail('database/migrations/'.$name, '<fg=green>published</>');
     }
 
     private function publishHost(Filesystem $files): void

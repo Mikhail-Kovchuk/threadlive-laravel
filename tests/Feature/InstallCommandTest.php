@@ -26,6 +26,27 @@ it('keeps what is already there, and never publishes the migration twice', funct
         ->and(glob(database_path('migrations/*_create_threadlive_tables.php')))->toHaveCount(1);
 });
 
+it('publishes a later migration of the package into an app that has the first, after it', function () {
+    $files = glob(__DIR__.'/../../database/migrations/2026_11_18_000000_create_threadlive_tables.php');
+    copy($files[0], database_path('migrations/2026_11_20_120000_create_threadlive_tables.php'));
+
+    $this->artisan('threadlive:install', ['--no-migrate' => true])->assertSuccessful();
+
+    $published = glob(database_path('migrations/*_threadlive_tables.php'));
+    sort($published);
+    expect(array_map(fn (string $f) => (string) preg_replace('/^\d{4}_\d{2}_\d{2}_\d{6}_/', '', basename($f)), $published))
+        ->toBe(['create_threadlive_tables.php', 'add_assistant_to_threadlive_tables.php']);
+});
+
+it('publishes the migrations of a fresh install in their order', function () {
+    $this->artisan('threadlive:install', ['--no-migrate' => true])->assertSuccessful();
+
+    $published = glob(database_path('migrations/*_threadlive_tables.php'));
+    sort($published);
+    expect(basename($published[0]))->toEndWith('_create_threadlive_tables.php')
+        ->and(basename($published[1]))->toEndWith('_add_assistant_to_threadlive_tables.php');
+});
+
 it('adds the .env keys once, with a generated webhook secret', function () {
     $env = base_path('.env');
     $hadEnv = is_file($env);

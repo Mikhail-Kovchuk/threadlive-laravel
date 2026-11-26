@@ -138,6 +138,13 @@ return [
 
     'agent_display_name' => 'Support',
 
+    // Telegram usernames called by name in General when a conversation needs
+    // a manager and nobody has it yet — the AI assistant's handoff, a
+    // waiting alert. A mention reaches them even with the group muted. A
+    // conversation a manager already has calls that manager instead, in its
+    // topic. e.g. ['@maria', '@oleh']; [] = no mentions.
+    'mention' => [],
+
     // Translation, switched on per conversation with /translate in its topic:
     // the visitor's messages reach the managers with a translation into
     // `target`, and the managers' replies reach the visitor in the visitor's
@@ -206,13 +213,47 @@ return [
     // (/faq alone gives the current one back), or with
     // php artisan threadlive:faq import; kept at `path`. Each text may come
     // in several languages ({"en": "…", "uk": "…"}); a visitor gets theirs
-    // as `language` above says. translate: the translation driver fills in
-    // the `languages` an entry lacks when a file is loaded — never replacing
-    // what the file has.
+    // as `language` above says. An entry with "show": false stays out of the
+    // widget, but the AI assistant still knows it. translate: the
+    // translation driver fills in the `languages` an entry lacks when a file
+    // is loaded — never replacing what the file has.
     'faq' => [
         'path' => storage_path('app/threadlive/faq.json'),
         'translate' => false,
         'languages' => [],
+    ],
+
+    // The AI assistant: it answers a new conversation first, from `about`
+    // and the FAQ only, and hands the conversation to the managers when it
+    // cannot help, when the visitor asks for a person, after `max_replies`
+    // answers, or on any error. Any manager reply in the topic takes over
+    // too; /ai on|off switches it per conversation. Uses Google Gemini (the
+    // `gemini` block: key and, unless `model` is set here, model).
+    // first: 'always', or 'off_hours' — only outside `hours`.
+    // about: who we are — what you do, for whom, what visitors usually ask
+    // about. For the AI, in any language; the prompt puts it in.
+    // prompt: your own prompt, replacing the package's whole —
+    // php artisan threadlive:make-prompt creates this class from the
+    // package's one. No such class: the package's prompt (a general one for
+    // a website's live chat). The AI never sees ChatHost's card lines or
+    // admin links.
+    // daily_limit: answers a day for all conversations; past it, new
+    // questions go straight to the managers.
+    'assistant' => [
+        'enabled' => false,
+        // 'gemini', or a class implementing Threadlive\Contracts\Assistant.
+        'driver' => 'gemini',
+        'first' => 'always',
+        'name' => 'AI assistant',
+        'model' => null,
+        'about' => <<<'TEXT'
+            We are an online service. This chat is our support: our managers
+            answer here during working hours.
+            TEXT,
+        'prompt' => 'App\\Threadlive\\AssistantPrompt',
+        'max_replies' => 6,
+        'history' => 20,
+        'daily_limit' => 500,
     ],
 
     // The header's "go elsewhere" button — your support account in Telegram,

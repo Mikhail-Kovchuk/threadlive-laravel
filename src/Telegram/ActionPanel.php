@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Threadlive\Telegram;
 
 use InvalidArgumentException;
+use Threadlive\Assistant\AssistantService;
 use Threadlive\Models\Conversation;
 use Threadlive\Translation\Languages;
 use Threadlive\Translation\TranslationService;
@@ -19,6 +20,7 @@ use Threadlive\Translation\TranslationService;
  *   tl:menu:12        open the menu on the card     tl:back:12  close it
  *   tl:tr:12:en:c     translation into EN           tl:tr:12:off:p
  *   tl:cmd:12:order:c run /order (asks for its argument)
+ *   tl:ai:12:on:c     the assistant answers it      tl:ai:12:off:c  the managers do
  * The last part says where the buttons are: c = the card, p = a /menu panel.
  */
 final class ActionPanel
@@ -30,6 +32,7 @@ final class ActionPanel
     public function __construct(
         private readonly TranslationService $translation,
         private readonly Commands $commands,
+        private readonly AssistantService $assistant,
     ) {}
 
     /**
@@ -55,6 +58,15 @@ final class ActionPanel
                 'callback_data' => "tl:tr:{$id}:off:{$where}",
             ];
             array_push($rows, ...array_chunk($buttons, 4));
+        }
+
+        // Who answers: the assistant, or the managers (the same as /ai on|off).
+        if ($this->assistant->enabled()) {
+            $ai = $conversation->withAssistant();
+            $rows[] = [
+                ['text' => '🤖 AI answers'.($ai ? ' ✓' : ''), 'callback_data' => "tl:ai:{$id}:on:{$where}"],
+                ['text' => '🙋 Managers answer'.($ai ? '' : ' ✓'), 'callback_data' => "tl:ai:{$id}:off:{$where}"],
+            ];
         }
 
         $commands = [];

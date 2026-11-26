@@ -93,12 +93,36 @@ Send it in the group with the caption `/faq`, or run
 `php artisan threadlive:faq import faq.json`. The whole file is checked
 first: with any mistake nothing changes and the bot lists what is wrong.
 A plain text is in `language.default`; `show: false` keeps an entry out of
-the widget. With `faq.translate` on, the translation driver fills in the
+the widget — the AI assistant still knows it, so hidden entries make a
+knowledge base for the AI alone. With `faq.translate` on, the translation driver fills in the
 `faq.languages` an entry lacks — never replacing what you wrote.
 
 The chat speaks each visitor's language when it has a text in it (their
 browser's), else `language.default`; `language.browser = false` makes it
 always the default.
+
+### AI assistant
+
+With `assistant.enabled` and `THREADLIVE_GEMINI_KEY`, an AI answers a new
+conversation first — from `assistant.about` (who you are) and the FAQ, in
+the visitor's language — and hands it to the managers when it cannot help,
+when the visitor presses "Talk to a person", or on any error: the topic gets
+"🙋 Needs a manager" with the reason and a summary — calling the manager who
+has the conversation by name, or, with nobody on it, posted in General as
+well with a button to the topic and the managers of `mention`
+(`['@maria', '@oleh']`) called by name. Its replies show in the
+topic silently under 🤖. A manager's reply takes over at once; `/ai on|off`
+switches it per conversation. `assistant.first = 'off_hours'` lets it answer
+only outside the support hours.
+
+The package's prompt is a general one for a website's live chat. To write
+your own, run `php artisan threadlive:make-prompt`: it copies the package's
+into `app/Threadlive/AssistantPrompt.php`, which replaces it whole from then
+on. `PromptContext` hands it the facts (who you are, the time, the hours,
+the FAQ, the page, the languages); the shape of the answer stays the
+package's, so no prompt can break a handoff. Try it from the terminal:
+`php artisan threadlive:assistant ask "When are you open?"`. The AI never
+sees your `ChatHost`'s card lines or admin links.
 
 ## Settings
 
@@ -133,6 +157,8 @@ and keeps your values.
 | `threadlive:retry-failed` | send undelivered messages again |
 | `threadlive:test` | open, post in and close a test topic |
 | `threadlive:make-command Name` | a command for managers |
+| `threadlive:make-prompt` | your own prompt for the AI assistant |
+| `threadlive:assistant show` · `threadlive:assistant ask "…"` | print the assistant's prompt · ask it once |
 | `threadlive:maintain`, `threadlive:prune` | scheduled by the package |
 
 ## License

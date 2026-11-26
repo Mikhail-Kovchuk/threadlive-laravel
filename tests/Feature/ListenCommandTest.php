@@ -3,6 +3,7 @@
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Sleep;
 use Threadlive\Enums\Direction;
 use Threadlive\Enums\TopicState;
 use Threadlive\Models\Conversation;
@@ -47,6 +48,34 @@ it('turns a dropped connection into a TelegramException without the bot token', 
         ->and($error?->getMessage())->toContain('connection failed')
         ->and($error?->getMessage())->not->toContain('test-token')
         ->and($error?->getMessage())->toContain('bot***/getUpdates');
+});
+
+it('waits for Telegram when it is out of reach at the start, instead of stopping', function () {
+    Sleep::fake();
+    fakeTelegram([
+        'getWebhookInfo' => fn (array $params, int $nth) => $nth === 1
+            ? throw new ConnectionException('cURL error 35: Recv failure: Connection was reset')
+            : ['url' => ''],
+        'getUpdates' => [],
+    ]);
+
+    $this->artisan('threadlive:listen', ['--once' => true])
+        ->expectsOutputToContain('trying again in 5 s')
+        ->assertSuccessful();
+
+    Sleep::assertSleptTimes(1);
+    expect(telegramCalls('getUpdates'))->toHaveCount(1);
+});
+
+it('stops at once when Telegram refuses (a wrong token), and with --once after a few tries', function () {
+    Sleep::fake();
+    fakeTelegram(['getWebhookInfo' => ['error' => 'Unauthorized']]);
+    $this->artisan('threadlive:listen', ['--once' => true])->assertFailed();
+    Sleep::assertNeverSlept();
+
+    fakeTelegram(['getWebhookInfo' => fn () => throw new ConnectionException('cURL error 28: Connection timed out')]);
+    $this->artisan('threadlive:listen', ['--once' => true])->assertFailed();
+    Sleep::assertSleptTimes(2);
 });
 
 it('will not take updates away from a webhook unless told to', function () {

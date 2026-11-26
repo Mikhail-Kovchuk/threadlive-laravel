@@ -21,6 +21,7 @@ use Threadlive\Enums\Direction;
  * @property int|null $telegram_message_id
  * @property int|null $telegram_from_id
  * @property string|null $agent_name
+ * @property bool $by_assistant an agent message the AI assistant wrote
  * @property Delivery|null $delivery
  * @property Carbon|null $edited_at
  * @property Carbon|null $created_at
@@ -43,6 +44,7 @@ class Message extends Model
             'telegram_message_id' => 'integer',
             'telegram_from_id' => 'integer',
             'edited_at' => 'datetime',
+            'by_assistant' => 'boolean',
         ];
     }
 

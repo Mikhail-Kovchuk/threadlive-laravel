@@ -19,13 +19,18 @@ it('merges the config, so an unpublished one still works', function () {
         ->and(config('threadlive.poll_ms'))->toBe(['open' => 3000, 'closed' => 30000, 'idle' => 15000, 'idle_after' => 300000]);
 });
 
-it('publishes the config and the migration under their tags', function () {
-    foreach (['threadlive-config' => 'threadlive.php', 'threadlive-migrations' => 'create_threadlive_tables.php'] as $tag => $file) {
-        $paths = ServiceProvider::pathsToPublish(ThreadliveServiceProvider::class, $tag);
+it('publishes the config and the migrations under their tags', function () {
+    $config = ServiceProvider::pathsToPublish(ThreadliveServiceProvider::class, 'threadlive-config');
+    expect($config)->toHaveCount(1)
+        ->and(array_keys($config)[0])->toBeFile()
+        ->and(array_values($config)[0])->toEndWith('threadlive.php');
 
-        expect($paths)->toHaveCount(1)
-            ->and(array_keys($paths)[0])->toBeFile()
-            ->and(array_values($paths)[0])->toEndWith($file);
+    // Every migration of the package, the first one first.
+    $migrations = ServiceProvider::pathsToPublish(ThreadliveServiceProvider::class, 'threadlive-migrations');
+    expect(count($migrations))->toBe(count(glob(__DIR__.'/../../database/migrations/*.php') ?: []))
+        ->and(array_values($migrations)[0])->toEndWith('create_threadlive_tables.php');
+    foreach (array_keys($migrations) as $source) {
+        expect($source)->toBeFile();
     }
 });
 

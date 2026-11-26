@@ -60,23 +60,25 @@ final class TelegramClient
             throw new TelegramException('THREADLIVE_BOT_TOKEN is not set.');
         }
 
-        $fields = [];
+        // The parts built here, not through attach(): Laravel 12.0's attach()
+        // drops empty contents, which guzzlehttp/psr7 1.x then refuses.
+        $parts = [['name' => $file[0], 'contents' => $file[1], 'filename' => $file[2]]];
         foreach ($params as $name => $value) {
             if ($value === null) {
                 continue;
             }
-            $fields[$name] = match (true) {
+            $parts[] = ['name' => $name, 'contents' => match (true) {
                 is_array($value) => (string) json_encode($value),
                 is_bool($value) => $value ? 'true' : 'false',
                 default => (string) $value,
-            };
+            }];
         }
 
         $response = $this->guard($method, fn () => $this->http
             ->acceptJson()
+            ->asMultipart()
             ->timeout(120)
-            ->attach($file[0], $file[1], $file[2])
-            ->post(self::API."/bot{$this->token}/{$method}", $fields));
+            ->post(self::API."/bot{$this->token}/{$method}", $parts));
 
         $data = $response->json();
 
@@ -127,7 +129,10 @@ final class TelegramClient
         try {
             return $send();
         } catch (ConnectionException $e) {
-            throw new TelegramException("Telegram {$method}: connection failed (".str_replace($this->token, '***', $e->getMessage()).')');
+            throw new TelegramException(
+                "Telegram {$method}: connection failed (".str_replace($this->token, '***', $e->getMessage()).')',
+                connectionFailed: true,
+            );
         }
     }
 

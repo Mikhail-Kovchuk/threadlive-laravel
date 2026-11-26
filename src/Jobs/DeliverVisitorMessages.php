@@ -149,6 +149,13 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
 
         // The dashboard's "⚠️ Not delivered" line is how managers learn of it.
         RefreshDashboard::dispatch();
+
+        // The visitor still gets their answer: the topic is only the
+        // managers' copy.
+        $conversation = Conversation::query()->find($this->conversationId);
+        if ($conversation?->withAssistant() === true) {
+            AnswerWithAssistant::dispatch($conversation->id);
+        }
     }
 
     private static function upToKey(int $conversationId): string
@@ -238,6 +245,10 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
 
         Cache::put(self::upToKey($conversation->id), (int) $pending->max('id'), now()->addDay());
 
+        // While the assistant answers, the managers are not called: no sound.
+        $quiet = $conversation->withAssistant();
+        $visitorWrote = $pending->contains(fn (Message $m) => $m->direction === Direction::Visitor);
+
         // A text that went out on an earlier try, whose files did not:
         // the text is not posted twice.
         $wentOut = fn (Message $m) => $m->telegram_message_id !== null && ($m->attachments === null || $m->attachments === []);
@@ -256,7 +267,7 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
 
             if ($html !== null && $messageId === null) {
                 foreach (self::fit($html, $messages) as $i => $part) {
-                    $partId = $telegram->sendMessage($topics->chatId(), $part, $thread, $silent || $i > 0);
+                    $partId = $telegram->sendMessage($topics->chatId(), $part, $thread, $silent || $quiet || $i > 0);
                     $messageId ??= $partId;
                 }
                 Message::query()->whereKey($ids)->update(['telegram_message_id' => $messageId]);
@@ -274,7 +285,7 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
                     continue;
                 }
 
-                $fileMessageId = $this->sendFile($telegram, $topics->chatId(), $thread, $file, silent: $sentOne);
+                $fileMessageId = $this->sendFile($telegram, $topics->chatId(), $thread, $file, silent: $sentOne || $quiet);
                 $sentOne = true;
                 $messageId ??= $fileMessageId;
 
@@ -306,6 +317,11 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
         // The visitor wrote: the topic shows ❗ again, reopened if it was closed.
         $topics->sync($conversation->refresh());
         RefreshDashboard::dispatch();
+
+        // Now that the topic has the question, the assistant's answer.
+        if ($visitorWrote && $conversation->withAssistant()) {
+            AnswerWithAssistant::dispatch($conversation->id);
+        }
     }
 
     /**

@@ -6,7 +6,7 @@ namespace Threadlive\Telegram;
 
 use RuntimeException;
 
-/** A Bot API call Telegram answered with ok: false. */
+/** A Bot API call Telegram answered with ok: false — or never answered. */
 final class TelegramException extends RuntimeException
 {
     public function __construct(
@@ -16,6 +16,8 @@ final class TelegramException extends RuntimeException
         public readonly ?int $retryAfter = null,
         /** The group became a supergroup (turning Topics on does that): its new id. */
         public readonly ?int $migrateToChatId = null,
+        /** No answer at all — a timeout, a reset connection: worth trying again. */
+        public readonly bool $connectionFailed = false,
     ) {
         parent::__construct($message, $errorCode);
     }
