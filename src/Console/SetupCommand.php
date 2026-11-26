@@ -77,11 +77,21 @@ final class SetupCommand extends Command
         $this->pass('Commands', implode(' ', array_map(fn (array $c) => '/'.$c['command'], $menu)));
 
         if ($url !== null) {
-            $telegram->call('setWebhook', [
-                'url' => $url,
-                'secret_token' => (string) config('threadlive.webhook_secret'),
-                'allowed_updates' => ['message', 'edited_message', 'callback_query'],
-            ]);
+            try {
+                $telegram->call('setWebhook', [
+                    'url' => $url,
+                    'secret_token' => (string) config('threadlive.webhook_secret'),
+                    'allowed_updates' => ['message', 'edited_message', 'callback_query'],
+                ]);
+            } catch (TelegramException $e) {
+                // Usually an address only this machine knows (psm.local,
+                // localhost): Telegram has to reach it from the internet.
+                $this->problem('Webhook', "Telegram cannot use {$url} ({$e->getMessage()}). It must reach it from the internet "
+                    .'over HTTPS: set APP_URL to the public address. On a development machine, run '
+                    .'php artisan threadlive:setup --local and php artisan threadlive:listen instead.');
+
+                return self::FAILURE;
+            }
             $this->pass('Webhook', $url);
         } else {
             $this->pass('Webhook', 'none (local): updates come through threadlive:listen');

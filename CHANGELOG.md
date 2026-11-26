@@ -4,6 +4,12 @@ All notable changes to `threadlive/threadlive-laravel`. The widget,
 `threadlive-react`, is released with the same version numbers; use the two
 at the same version.
 
+## 0.2.1 — 2026-11-26
+
+- **Fix:** `threadlive:setup` with an address Telegram cannot reach (a
+  local one, e.g. `https://app.local`) now says so and points at
+  `--local` + `threadlive:listen`, instead of failing with a stack trace.
+
 ## 0.2.0 — 2026-11-26
 
 - **AI assistant** (`assistant` block, off by default; Google Gemini with

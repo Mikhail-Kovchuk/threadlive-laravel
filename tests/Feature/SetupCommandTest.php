@@ -80,6 +80,19 @@ it('refuses a webhook address that is not HTTPS, pointing at a tunnel', function
     expect(telegramCalls('setWebhook'))->toBeEmpty();
 });
 
+it('explains an address Telegram cannot reach, pointing at --local, instead of failing with a trace', function () {
+    url()->forceRootUrl('https://psm.local');
+    healthyGroup(['setWebhook' => ['error' => 'Bad Request: bad webhook: Failed to resolve host: Name or service not known']]);
+
+    $this->artisan('threadlive:setup')
+        // One message: the address, why, and --local (one line of output
+        // meets one expectation, so only its start is checked).
+        ->expectsOutputToContain('Telegram cannot use https://psm.local/threadlive/telegram/webhook')
+        ->assertFailed();
+
+    expect(telegramCalls('pinChatMessage'))->toBeEmpty();
+});
+
 it('says so when there is no token', function () {
     config()->set('threadlive.bot_token', '');
 
