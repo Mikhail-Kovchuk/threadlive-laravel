@@ -60,6 +60,17 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
         return now()->addHours(2);
     }
 
+    /**
+     * The "one job per conversation" lock only gathers a burst into one job.
+     * It must not outlive that: a job lost before it ran (a worker started
+     * before this package was installed, a flushed queue) would otherwise
+     * keep every later message of the conversation from being sent. A second
+     * job queued after it expires does no harm — it finds nothing pending.
+     */
+    public int $uniqueFor = self::UNIQUE_SECONDS;
+
+    public const UNIQUE_SECONDS = 60;
+
     public function __construct(public readonly int $conversationId)
     {
         self::useConfiguredQueue($this);

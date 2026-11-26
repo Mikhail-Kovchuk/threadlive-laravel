@@ -38,6 +38,9 @@ final class SyncTopic implements ShouldBeUniqueUntilProcessing, ShouldQueue
         return now()->addHours(2);
     }
 
+    /** Like DeliverVisitorMessages: a lost job must not block the topic for good. */
+    public int $uniqueFor = DeliverVisitorMessages::UNIQUE_SECONDS;
+
     public function __construct(public readonly int $conversationId)
     {
         DeliverVisitorMessages::useConfiguredQueue($this);

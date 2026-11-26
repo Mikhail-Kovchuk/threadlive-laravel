@@ -10,6 +10,7 @@ use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\Topics;
 use Threadlive\Tests\Fixtures\FakeTranslator;
 use Threadlive\Translation\DeepLTranslator;
+use Threadlive\Translation\TranslationService;
 
 /** A guest conversation in topic 300, written in Spanish; returns the token. */
 function spanishConversation(): array
@@ -152,6 +153,16 @@ it('never shows the visitor a reply before its translation', function () {
     expect($seen)->toBe([])
         ->and($conversation->messages()->where('direction', 'agent')->firstOrFail()->translation['text'] ?? null)
         ->toBe('[es] Checking it now');
+});
+
+it('keeps DeepL off until there is a key', function () {
+    config()->set('threadlive.translation.driver', 'deepl');
+    config()->set('threadlive.translation.key', '');
+
+    expect(app(TranslationService::class)->enabled())->toBeFalse();
+
+    config()->set('threadlive.translation.key', 'abc:fx');
+    expect(app(TranslationService::class)->enabled())->toBeTrue();
 });
 
 it('sends the reply as written when the translator fails', function () {

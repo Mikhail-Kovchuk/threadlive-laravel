@@ -134,6 +134,21 @@ it('leaves messages that came after it gave up to their own job', function () {
         ->toBe(['Hello' => Delivery::Failed, 'Anyone there?' => Delivery::Pending]);
 });
 
+it('is not blocked for good by a delivery job that was lost before it ran', function () {
+    Queue::fake();
+    $token = sendMessage('Hello')->json('visitor_token');
+    // The first job never runs: a worker that did not know the class yet.
+    Queue::assertPushed(DeliverVisitorMessages::class, 1);
+
+    sendMessage('Anyone?', $token);
+    Queue::assertPushed(DeliverVisitorMessages::class, 1); // the burst: one job
+
+    $this->travel(DeliverVisitorMessages::UNIQUE_SECONDS + 1)->seconds();
+    sendMessage('Hello???', $token);
+
+    Queue::assertPushed(DeliverVisitorMessages::class, 2);
+});
+
 it('waits out rate limits rather than counting them as failures', function () {
     $job = new DeliverVisitorMessages(1);
 

@@ -68,6 +68,12 @@ final class TranslationService
         $driver = config('threadlive.translation.driver');
 
         if ($driver === 'deepl') {
+            // No key yet (it comes from .env): off, rather than a /translate
+            // in the menu whose every translation fails.
+            if (trim((string) config('threadlive.translation.key')) === '') {
+                return null;
+            }
+
             return new DeepLTranslator(
                 $this->container->make(HttpFactory::class),
                 (string) config('threadlive.translation.key'),
