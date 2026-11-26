@@ -7,6 +7,7 @@ namespace Threadlive\Translation;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Threadlive\Contracts\Translator;
+use Threadlive\Gemini\GeminiClient;
 use Throwable;
 
 /**
@@ -78,6 +79,13 @@ final class TranslationService
                 $this->container->make(HttpFactory::class),
                 (string) config('threadlive.translation.key'),
             );
+        }
+
+        if ($driver === 'gemini') {
+            $gemini = GeminiClient::fromConfig($this->container->make(HttpFactory::class));
+
+            // Off without THREADLIVE_GEMINI_KEY, like DeepL without its key.
+            return $gemini->hasKey() ? new GeminiTranslator($gemini) : null;
         }
 
         if (is_string($driver) && class_exists($driver)) {

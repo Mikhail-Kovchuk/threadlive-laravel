@@ -21,6 +21,8 @@ describe('bootstrap', function () {
             'can_write' => true,
             'poll_ms' => ['open' => 3000, 'closed' => 30000, 'idle' => 15000, 'idle_after' => 300000],
             'topics' => [],
+            'languages' => ['en'],
+            'faq' => [],
             'max_message_length' => 2000,
             'fallback' => null,
             'attachments' => [

@@ -117,5 +117,6 @@ it('keeps .env to what differs between environments, or is secret', function () 
         'THREADLIVE_TURNSTILE_SECRET',
         'THREADLIVE_QUEUE_CONNECTION',
         'THREADLIVE_TRANSLATION_KEY',
+        'THREADLIVE_GEMINI_KEY',
     ]);
 });

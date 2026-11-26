@@ -207,7 +207,7 @@ it('answers that taking is off, and drops the button, when the setting was turne
 
     expect($conversation->refresh()->assignee_name)->toBeNull()
         ->and(telegramCalls('answerCallbackQuery')[0]['text'])->toBe('Taking conversations is turned off.')
-        ->and(telegramCalls('editMessageReplyMarkup')[0]['reply_markup']['inline_keyboard'][0])->toHaveCount(1);
+        ->and(array_column(telegramCalls('editMessageReplyMarkup')[0]['reply_markup']['inline_keyboard'][0], 'text'))->toBe(['✅ Close', '⚙️ Actions']);
 });
 
 it('brings the topic name and state in line: 💬 after a reply, closed after /close', function () {

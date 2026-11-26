@@ -12,8 +12,9 @@ use Threadlive\Host\GuardChatHost;
  * Only what differs between environments, or is secret, comes from .env:
  * THREADLIVE_ENABLED, THREADLIVE_BOT_TOKEN, THREADLIVE_GROUP_ID,
  * THREADLIVE_WEBHOOK_SECRET, THREADLIVE_TURNSTILE_SITE_KEY,
- * THREADLIVE_TURNSTILE_SECRET, THREADLIVE_QUEUE_CONNECTION and
- * THREADLIVE_TRANSLATION_KEY. Everything else is set below.
+ * THREADLIVE_TURNSTILE_SECRET, THREADLIVE_QUEUE_CONNECTION,
+ * THREADLIVE_TRANSLATION_KEY and THREADLIVE_GEMINI_KEY. Everything else is
+ * set below.
  */
 
 return [
@@ -140,14 +141,30 @@ return [
     // Translation, switched on per conversation with /translate in its topic:
     // the visitor's messages reach the managers with a translation into
     // `target`, and the managers' replies reach the visitor in the visitor's
-    // language. driver: 'deepl', a class implementing
-    // Threadlive\Contracts\Translator, or null (off). The key comes from
-    // .env. `languages`: what /translate <language> may switch to.
+    // language. driver: 'gemini' (uses the `gemini` block below), 'deepl'
+    // (key: THREADLIVE_TRANSLATION_KEY), a class implementing
+    // Threadlive\Contracts\Translator, or null (off). `languages`: what
+    // /translate <language> may switch to. auto: the first message of a
+    // conversation tells the visitor's language, and one other than
+    // `target` turns translation on by itself (a manager can still turn it
+    // off); one translation per new conversation.
     'translation' => [
         'driver' => null,
         'key' => env('THREADLIVE_TRANSLATION_KEY'),
         'target' => 'en',
         'languages' => ['en', 'ru'],
+        'auto' => false,
+    ],
+
+    // Google Gemini, for translation (driver 'gemini'). Use a key of a paid
+    // project: on the free tier Google may train on what visitors write.
+    // Flash-Lite translates in about a second; a manager's reply waits for
+    // its translation, so a slower model shows. thinking: the thinking
+    // level ('low' is enough to translate); null for a model without levels.
+    'gemini' => [
+        'key' => env('THREADLIVE_GEMINI_KEY'),
+        'model' => 'gemini-3.5-flash-lite',
+        'thinking' => 'low',
     ],
 
     /*
@@ -174,6 +191,28 @@ return [
         // 'A question about my account',
         // 'Billing',
         // 'Something else',
+    ],
+
+    // The language the chat speaks to a visitor: the widget's own texts and
+    // the FAQ. browser: their browser's language when there is a text in it;
+    // false — always `default`.
+    'language' => [
+        'default' => 'en',
+        'browser' => true,
+    ],
+
+    // Quick answers on the widget's first screen, opened without writing to
+    // anyone. Loaded from a faq.json sent in the group with the caption /faq
+    // (/faq alone gives the current one back), or with
+    // php artisan threadlive:faq import; kept at `path`. Each text may come
+    // in several languages ({"en": "…", "uk": "…"}); a visitor gets theirs
+    // as `language` above says. translate: the translation driver fills in
+    // the `languages` an entry lacks when a file is loaded — never replacing
+    // what the file has.
+    'faq' => [
+        'path' => storage_path('app/threadlive/faq.json'),
+        'translate' => false,
+        'languages' => [],
     ],
 
     // The header's "go elsewhere" button — your support account in Telegram,

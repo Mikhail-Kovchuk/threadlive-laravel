@@ -12,10 +12,10 @@ use Threadlive\Contracts\ManagerCommand;
 final class Commands
 {
     /** The package's own: an app's command may not take these names. */
-    public const RESERVED = ['close', 'translate', 'find'];
+    public const RESERVED = ['close', 'translate', 'find', 'menu', 'faq'];
 
     /** Of those, the ones that act on the topic they are sent in (UpdateHandler). */
-    public const TOPIC_OWN = ['close', 'translate'];
+    public const TOPIC_OWN = ['close', 'translate', 'menu'];
 
     public function __construct(private readonly Container $container) {}
 

@@ -73,7 +73,7 @@ function fakeTelegram(array $overrides = []): void
 
         // A file download (after getFile): the bytes themselves.
         if (str_contains($request->url(), '/file/bot')) {
-            return Http::response('fake-file-bytes');
+            return Http::response($GLOBALS['telegramFileContents'] ?? 'fake-file-bytes');
         }
 
         $method = Str::afterLast($request->url(), '/');

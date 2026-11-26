@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 use Threadlive\Console\ConfigCommand;
+use Threadlive\Console\FaqCommand;
 use Threadlive\Console\InstallCommand;
 use Threadlive\Console\ListenCommand;
 use Threadlive\Console\MaintainCommand;
@@ -119,6 +120,7 @@ class ThreadliveServiceProvider extends ServiceProvider
                 MaintainCommand::class,
                 PruneCommand::class,
                 RetryFailedCommand::class,
+                FaqCommand::class,
             ]);
 
             $this->publishes([

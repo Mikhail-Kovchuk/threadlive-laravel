@@ -204,7 +204,10 @@ final class SetupCommand extends Command
             return null;
         }
 
-        $menu = [['command' => 'close', 'description' => 'Close this conversation (in its topic)']];
+        $menu = [
+            ['command' => 'menu', 'description' => 'Buttons for this conversation (in its topic)'],
+            ['command' => 'close', 'description' => 'Close this conversation (in its topic)'],
+        ];
 
         if ($this->translation->enabled()) {
             $menu[] = [
@@ -212,6 +215,8 @@ final class SetupCommand extends Command
                 'description' => 'Translate this conversation: /translate ['.implode('|', $this->translation->languages()).'|off]',
             ];
         }
+
+        $menu[] = ['command' => 'faq', 'description' => 'Quick answers: get faq.json; send one with the caption /faq to replace it'];
 
         foreach ($all as $name => $command) {
             $description = trim($command->description());

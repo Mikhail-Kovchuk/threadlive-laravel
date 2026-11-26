@@ -57,6 +57,7 @@ final class InstallCommand extends Command
             'config/threadlive.php: hours, timings, topics, commands — change them there, never in vendor/. '
                 .'After a package update, php artisan threadlive:config adds the new settings.',
             'app/Threadlive/ChatHost.php: who is signed in, card lines for managers, context cards for visitors.',
+            'Quick answers for the widget: send a faq.json in the group with the caption /faq (or php artisan threadlive:faq import).',
             'Run a queue worker and the scheduler (php artisan schedule:run every minute).',
             'Set THREADLIVE_ENABLED=true when setup passes.',
         ]);

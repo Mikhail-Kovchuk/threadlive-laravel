@@ -13,10 +13,12 @@ use Threadlive\Events\AgentReplied;
 use Threadlive\Jobs\DeliverVisitorMessages;
 use Threadlive\Jobs\RefreshDashboard;
 use Threadlive\Jobs\SyncTopic;
+use Threadlive\Jobs\TranslateFaq;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
 use Threadlive\Support\Attachments;
 use Threadlive\Support\ConversationActions;
+use Threadlive\Support\Faq;
 use Threadlive\Translation\Languages;
 use Threadlive\Translation\Translation;
 use Threadlive\Translation\TranslationService;
@@ -29,6 +31,8 @@ use Threadlive\Translation\TranslationService;
  *   /close                   → closes the conversation and the topic
  *   an edited reply          → the visitor sees the new text
  *   🙋 Take / ✅ Close        → assign / close
+ *   ⚙️ Actions, /menu         → buttons for translation and the app's commands
+ *   /faq (anywhere)          → the FAQ file; a faq.json with that caption replaces it
  *   /find what (anywhere)    → conversations by #number, e-mail, name or words
  *   /name argument (anywhere) → the app's ManagerCommand answers, managers only
  *
@@ -42,11 +46,15 @@ final class UpdateHandler
 
     private const PROMPT_TTL = 3600;
 
+    /** Cache key of a conversation's /menu panel → its message id (one at a time). */
+    private const PANEL_KEY = 'threadlive:panel:';
+
     public function __construct(
         private readonly TelegramClient $telegram,
         private readonly Commands $commands,
         private readonly Cache $cache,
         private readonly TranslationService $translation,
+        private readonly ActionPanel $panel,
     ) {}
 
     /**
@@ -80,6 +88,14 @@ final class UpdateHandler
         }
 
         if (($message['from']['is_bot'] ?? false) === true) {
+            return;
+        }
+
+        // /faq, or a faq.json with that caption: anywhere, never to a visitor.
+        $command = $message['text'] ?? $message['caption'] ?? null;
+        if (! $edited && is_string($command) && preg_match('/^\/faq(@\w+)?$/i', trim($command)) === 1) {
+            $this->faq($message);
+
             return;
         }
 
@@ -134,6 +150,12 @@ final class UpdateHandler
 
         if (preg_match('/^\/translate(?:@\w+)?(?:\s+([A-Za-z-]+))?$/i', $trimmed, $m) === 1) {
             $this->toggleTranslation($conversation, $message, strtolower($m[1] ?? ''));
+
+            return;
+        }
+
+        if (preg_match('/^\/menu(@\w+)?$/i', $trimmed) === 1) {
+            $this->postPanel($conversation, $message);
 
             return;
         }
@@ -222,7 +244,7 @@ final class UpdateHandler
     private function toggleTranslation(Conversation $conversation, array $message, string $argument): void
     {
         if (! $this->translation->enabled()) {
-            $this->replyTo($message, 'Translation is not set up: set threadlive.translation.driver and THREADLIVE_TRANSLATION_KEY.');
+            $this->replyTo($message, 'Translation is not set up: set threadlive.translation.driver and its key in .env (THREADLIVE_GEMINI_KEY or THREADLIVE_TRANSLATION_KEY).');
 
             return;
         }
@@ -405,13 +427,38 @@ final class UpdateHandler
         $message = is_array($query['message'] ?? null) ? $query['message'] : [];
         $from = is_array($query['from'] ?? null) ? $query['from'] : [];
 
-        if ($id === null || ! $this->fromOurGroup($message) || preg_match('/^tl:(claim|close):(\d+)$/', $data, $m) !== 1) {
+        if ($id === null || ! $this->fromOurGroup($message)
+            || preg_match('/^tl:(claim|close|menu|back|tr|cmd):(\d+)(?::([a-z0-9_-]+):([cp]))?$/', $data, $m) !== 1) {
             return;
         }
 
         $conversation = Conversation::query()->find((int) $m[2]);
         if ($conversation === null) {
             $this->answer($id, 'This conversation no longer exists.');
+
+            return;
+        }
+
+        $argument = $m[3] ?? '';
+        $where = ($m[4] ?? '') === ActionPanel::ON_PANEL ? ActionPanel::ON_PANEL : ActionPanel::ON_CARD;
+
+        if ($m[1] === 'menu' || $m[1] === 'back') {
+            $this->setKeyboard($message, $m[1] === 'menu'
+                ? $this->panel->keyboard($conversation, ActionPanel::ON_CARD)
+                : VisitorCard::keyboard($conversation));
+            $this->answer($id, '');
+
+            return;
+        }
+
+        if ($m[1] === 'tr') {
+            $this->translationButton($conversation, $id, $message, $argument, $where);
+
+            return;
+        }
+
+        if ($m[1] === 'cmd') {
+            $this->commandButton($conversation, $id, $argument);
 
             return;
         }
@@ -442,6 +489,203 @@ final class UpdateHandler
      */
     private function dropTakeButton(Conversation $conversation, array $message): void
     {
+        $this->setKeyboard($message, VisitorCard::keyboard($conversation));
+    }
+
+    /**
+     * 🌐 EN / 🚫 Off in the menu: the same as /translate en|off — the topic
+     * gets the same post — and the ticks move.
+     *
+     * @param  array<mixed>  $message  the card or panel the button is on
+     * @param  ActionPanel::ON_*  $where
+     */
+    private function translationButton(Conversation $conversation, string $callbackId, array $message, string $argument, string $where): void
+    {
+        $topic = $this->topicOf($conversation);
+
+        if (! $this->translation->enabled() || $topic === null) {
+            $this->answer($callbackId, $topic === null ? 'This conversation has no topic.' : 'Translation is not set up.');
+
+            return;
+        }
+
+        $current = $conversation->translate_to;
+        if ($argument === ($current ?? 'off')) {
+            $this->answer($callbackId, $current === null ? 'Translation is already off.' : 'Already translating into '.Languages::label($current).'.');
+
+            return;
+        }
+
+        // Answered first: a translation of the last message can take a second.
+        $this->answer($callbackId, $argument === 'off' ? 'Translation off.' : 'Translation into '.Languages::label($argument).'.');
+        $this->toggleTranslation($conversation, $topic, $argument);
+        $this->setKeyboard($message, $this->panel->keyboard($conversation->refresh(), $where));
+    }
+
+    /**
+     * /order in the menu: the bot asks for the argument in the topic, as for
+     * a bare "/order".
+     */
+    private function commandButton(Conversation $conversation, string $callbackId, string $name): void
+    {
+        try {
+            $command = $this->commands->all()[$name] ?? null;
+        } catch (\InvalidArgumentException $e) {
+            report($e);
+            $command = null;
+        }
+
+        $topic = $this->topicOf($conversation);
+
+        if ($command === null || $topic === null) {
+            $this->answer($callbackId, $command === null ? 'This command is no longer set up.' : 'This conversation has no topic.');
+
+            return;
+        }
+
+        $this->answer($callbackId, '');
+        // Not selective: the question is no reply to anyone's message, and
+        // any manager may answer it.
+        $this->askFor($topic, $name, $command->description(), selective: false);
+    }
+
+    /**
+     * /menu: the buttons at the bottom of the topic, where the card has long
+     * scrolled away. The /menu message and the previous panel are removed,
+     * so the topic keeps one.
+     *
+     * @param  array<mixed>  $message
+     */
+    private function postPanel(Conversation $conversation, array $message): void
+    {
+        if (is_int($message['message_id'] ?? null)) {
+            $this->deleteMessage($message['message_id']);
+        }
+
+        $previous = $this->cache->pull(self::PANEL_KEY.$conversation->id);
+        if (is_int($previous)) {
+            $this->deleteMessage($previous);
+        }
+
+        $panel = $this->replyTo(
+            ['message_thread_id' => $message['message_thread_id'] ?? null, 'is_topic_message' => true],
+            '⚙️ <b>#'.$conversation->id.' · '.e($conversation->name ?: 'Guest').'</b>',
+            ['reply_markup' => ['inline_keyboard' => $this->panel->keyboard($conversation, ActionPanel::ON_PANEL)]],
+        );
+
+        if ($panel !== null) {
+            $this->cache->put(self::PANEL_KEY.$conversation->id, $panel, now()->addDays(30));
+        }
+    }
+
+    /**
+     * /faq: the current faq.json, to edit and send back. A faq.json sent with
+     * the caption /faq: checked whole, then put in place of the FAQ — or, with
+     * anything wrong, the FAQ stays as it was and the errors are listed.
+     *
+     * @param  array<mixed>  $message
+     */
+    private function faq(array $message): void
+    {
+        $document = is_array($message['document'] ?? null) ? $message['document'] : null;
+
+        if ($document === null) {
+            $this->sendFaq($message);
+
+            return;
+        }
+
+        if (! is_string($document['file_id'] ?? null) || (is_int($document['file_size'] ?? null) && $document['file_size'] > Faq::MAX_BYTES)) {
+            $this->replyTo($message, '❌ The FAQ was not changed: send a faq.json of up to 1 MB.');
+
+            return;
+        }
+
+        try {
+            $json = $this->telegram->download($document['file_id'])['contents'];
+        } catch (TelegramException $e) {
+            report($e);
+            $this->replyTo($message, '❌ The FAQ was not changed: the bot could not fetch the file. Send it again.');
+
+            return;
+        }
+
+        [$entries, $errors] = Faq::parse($json);
+
+        if ($errors !== []) {
+            $this->replyTo($message, "❌ The FAQ was not changed:\n".implode("\n", array_map(fn (string $error) => '• '.e($error), $errors)));
+
+            return;
+        }
+
+        Faq::save($entries);
+
+        $lines = ['✅ FAQ updated: '.e(Faq::summary($entries)).'.'];
+        if (Faq::translateTo() !== [] && $this->translation->enabled()) {
+            $lines[] = '🌐 Translating what is missing ('.e(implode(', ', Faq::translateTo())).') — the result comes here.';
+            $thread = is_int($message['message_thread_id'] ?? null) && ($message['is_topic_message'] ?? false) === true
+                ? $message['message_thread_id']
+                : 0;
+            TranslateFaq::dispatch($thread);
+        }
+
+        $this->replyTo($message, implode("\n", $lines));
+    }
+
+    /**
+     * @param  array<mixed>  $message
+     */
+    private function sendFaq(array $message): void
+    {
+        $entries = Faq::entries();
+
+        if ($entries === []) {
+            $this->replyTo($message, "📚 No FAQ yet. Send a faq.json with the caption /faq:\n"
+                .'<code>'.e('[{"id": "invoice", "question": "Where is my invoice?", "answer": "Account → Invoices."}]').'</code>'
+                ."\nSeveral languages: <code>".e('"question": {"en": "…", "uk": "…"}').'</code> — the same for "answer".');
+
+            return;
+        }
+
+        $inTopic = is_int($message['message_thread_id'] ?? null) && ($message['is_topic_message'] ?? false) === true;
+
+        try {
+            $this->telegram->upload('sendDocument', [
+                'chat_id' => (string) config('threadlive.chat_id'),
+                'message_thread_id' => $inTopic ? $message['message_thread_id'] : null,
+                'caption' => '📚 '.Faq::summary($entries).'. Edit it and send it back with the caption /faq.',
+                'disable_notification' => true,
+                'reply_parameters' => is_int($message['message_id'] ?? null)
+                    ? ['message_id' => $message['message_id'], 'allow_sending_without_reply' => true]
+                    : null,
+            ], ['document', Faq::encode($entries), 'faq.json']);
+        } catch (TelegramException $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * Where to post about a conversation from a button: its topic, as
+     * replyTo() takes it. Null when it has none.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function topicOf(Conversation $conversation): ?array
+    {
+        return $conversation->telegram_thread_id === null
+            ? null
+            : ['message_thread_id' => $conversation->telegram_thread_id, 'is_topic_message' => true];
+    }
+
+    /**
+     * New buttons under a message of the bot's. "Not modified" (pressed
+     * twice) is no error.
+     *
+     * @param  array<mixed>  $message
+     * @param  list<list<array{text: string, callback_data: string}>>  $keyboard
+     */
+    private function setKeyboard(array $message, array $keyboard): void
+    {
         if (! is_int($message['message_id'] ?? null)) {
             return;
         }
@@ -450,17 +694,23 @@ final class UpdateHandler
             $this->telegram->call('editMessageReplyMarkup', [
                 'chat_id' => (string) config('threadlive.chat_id'),
                 'message_id' => $message['message_id'],
-                'reply_markup' => ['inline_keyboard' => VisitorCard::keyboard($conversation)],
+                'reply_markup' => ['inline_keyboard' => $keyboard],
             ]);
         } catch (TelegramException $e) {
-            report($e);
+            if (! $e->isNotModified()) {
+                report($e);
+            }
         }
     }
 
+    /** The callback answered: a toast with $text, or just the spinner stopped. */
     private function answer(string $callbackId, string $text): void
     {
         try {
-            $this->telegram->call('answerCallbackQuery', ['callback_query_id' => $callbackId, 'text' => $text]);
+            $this->telegram->call('answerCallbackQuery', array_filter(
+                ['callback_query_id' => $callbackId, 'text' => $text],
+                fn (string $value) => $value !== '',
+            ));
         } catch (TelegramException $e) {
             report($e);
         }
@@ -511,16 +761,7 @@ final class UpdateHandler
         $argument = trim($m[3] ?? '');
 
         if ($argument === '') {
-            $prompt = $this->replyTo($message, '🔎 '.e($commands[$name]).' — send it in reply to this message.', [
-                'reply_markup' => [
-                    'force_reply' => true,
-                    'selective' => true,
-                    'input_field_placeholder' => mb_substr($commands[$name], 0, 64),
-                ],
-            ]);
-            if ($prompt !== null) {
-                $this->cache->put(self::PROMPT_KEY.$prompt, $name, self::PROMPT_TTL);
-            }
+            $this->askFor($message, $name, $commands[$name], selective: true);
 
             return true;
         }
@@ -528,6 +769,27 @@ final class UpdateHandler
         $this->answerCommand($message, $all[$name], $argument);
 
         return true;
+    }
+
+    /**
+     * "🔎 Look up an order — send it in reply to this message." The reply
+     * runs the command (managerCommand() finds it by the question's id).
+     *
+     * @param  array<mixed>  $message
+     */
+    private function askFor(array $message, string $name, string $description, bool $selective): void
+    {
+        $prompt = $this->replyTo($message, '🔎 '.e($description).' — send it in reply to this message.', [
+            'reply_markup' => [
+                'force_reply' => true,
+                'selective' => $selective,
+                'input_field_placeholder' => mb_substr($description, 0, 64),
+            ],
+        ]);
+
+        if ($prompt !== null) {
+            $this->cache->put(self::PROMPT_KEY.$prompt, $name, self::PROMPT_TTL);
+        }
     }
 
     /**
@@ -550,7 +812,8 @@ final class UpdateHandler
     }
 
     /**
-     * A silent reply in the same topic (or General).
+     * A silent reply in the same topic (or General). A $message without a
+     * message_id (a topic, from topicOf()) gets a plain post there.
      *
      * @param  array<mixed>  $message
      * @param  array<string, mixed>  $extra
@@ -568,7 +831,9 @@ final class UpdateHandler
                 'parse_mode' => 'HTML',
                 'disable_notification' => true,
                 'link_preview_options' => ['is_disabled' => true],
-                'reply_parameters' => ['message_id' => $message['message_id'], 'allow_sending_without_reply' => true],
+                'reply_parameters' => is_int($message['message_id'] ?? null)
+                    ? ['message_id' => $message['message_id'], 'allow_sending_without_reply' => true]
+                    : null,
                 ...$extra,
             ]);
         } catch (TelegramException $e) {
@@ -605,14 +870,17 @@ final class UpdateHandler
      */
     private function deleteServiceMessage(array $message): void
     {
-        if (! is_int($message['message_id'] ?? null)) {
-            return;
+        if (is_int($message['message_id'] ?? null)) {
+            $this->deleteMessage($message['message_id']);
         }
+    }
 
+    private function deleteMessage(int $messageId): void
+    {
         try {
             $this->telegram->call('deleteMessage', [
                 'chat_id' => (string) config('threadlive.chat_id'),
-                'message_id' => $message['message_id'],
+                'message_id' => $messageId,
             ]);
         } catch (TelegramException $e) {
             // Without "Delete messages" the line just stays; setup reports the right.

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Threadlive\Telegram;
 
 use Threadlive\Models\Conversation;
+use Threadlive\Support\Faq;
 
 /**
  * The first post of a topic: who the visitor is, where they wrote from, the
@@ -41,6 +42,11 @@ final class VisitorCard
             }
         }
 
+        $read = Faq::questions(array_values(array_filter((array) ($context['faq'] ?? []), 'is_string')));
+        if ($read !== []) {
+            $lines[] = '📚 Read in the FAQ: '.e(implode('; ', $read));
+        }
+
         $adminUrl = $card['admin_url'] ?? null;
         if (is_string($adminUrl) && self::isWebUrl($adminUrl)) {
             $lines[] = '🛠 <a href="'.e($adminUrl).'">Open in the admin panel</a>';
@@ -61,6 +67,8 @@ final class VisitorCard
         }
 
         $row[] = ['text' => '✅ Close', 'callback_data' => "tl:close:{$conversation->id}"];
+        // Opens ActionPanel in place of this row.
+        $row[] = ['text' => '⚙️ Actions', 'callback_data' => "tl:menu:{$conversation->id}"];
 
         return [$row];
     }

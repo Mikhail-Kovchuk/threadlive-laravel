@@ -24,6 +24,8 @@ use Threadlive\Events\VisitorMessageReceived;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
 use Threadlive\Support\Attachments;
+use Threadlive\Support\ChatLanguage;
+use Threadlive\Support\Faq;
 use Threadlive\Support\Turnstile;
 use Threadlive\Support\Visitor;
 use Threadlive\Support\WorkingHours;
@@ -73,6 +75,9 @@ final class VisitorController
                 (array) config('threadlive.topics', []),
                 fn ($topic) => is_string($topic) && trim($topic) !== '',
             )),
+            // The widget's texts: the first of these it has (config threadlive.language).
+            'languages' => ChatLanguage::wanted($request),
+            'faq' => Faq::forWidget($request),
             'max_message_length' => $this->maxLength(),
             'fallback' => $this->fallback(),
             'attachments' => [
@@ -136,6 +141,8 @@ final class VisitorController
             'context.url' => ['nullable', 'string', 'max:2048'],
             'context.title' => ['nullable', 'string', 'max:300'],
             'context.attributes' => ['nullable', 'array', 'max:20'],
+            'context.faq' => ['nullable', 'array', 'max:'.Faq::MAX_ENTRIES],
+            'context.faq.*' => ['string', 'max:64'],
             'files' => ['nullable', 'array', 'max:'.Attachments::maxFiles()],
             // mimes: judged by the content, not by the name.
             'files.*' => ['file', 'max:'.Attachments::maxKb(), 'mimes:'.implode(',', Attachments::types())],
@@ -270,7 +277,7 @@ final class VisitorController
     }
 
     /**
-     * @param  array{url?: string, title?: string, attributes?: array<string, string>}  $client
+     * @param  array{url?: string, title?: string, attributes?: array<string, string>, faq?: list<string>}  $client
      * @param  array{lines: list<array{label: string, value: string, url?: string}>, admin_url: string|null}  $managerCard
      * @param  list<UploadedFile>  $files
      * @return array{Conversation, ?Message, Message, ?string, bool}
@@ -381,7 +388,7 @@ final class VisitorController
      * and it is stored.
      *
      * @param  array<mixed>  $context
-     * @return array{url?: string, title?: string, attributes?: array<string, string>}
+     * @return array{url?: string, title?: string, attributes?: array<string, string>, faq?: list<string>}
      */
     private function clientContext(array $context): array
     {
@@ -402,6 +409,16 @@ final class VisitorController
 
         if ($attributes !== []) {
             $client['attributes'] = $attributes;
+        }
+
+        // The FAQ answers the visitor opened before writing: shown on the card.
+        $faq = array_values(array_unique(array_filter(
+            (array) ($context['faq'] ?? []),
+            fn ($id) => is_string($id) && preg_match('/^[a-z0-9_-]{1,64}$/', $id) === 1,
+        )));
+
+        if ($faq !== []) {
+            $client['faq'] = $faq;
         }
 
         return $client;

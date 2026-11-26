@@ -49,6 +49,9 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
     /** Longer quotes start collapsed. */
     private const LONG_QUOTE = 300;
 
+    /** translation.auto tells a language only from a message this long. */
+    private const DETECT_MIN_CHARS = 4;
+
     /**
      * Held back by the rate limit, or by another job of this conversation,
      * is not a failure: only real errors count, up to 5, within two hours.
@@ -244,7 +247,7 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
             Message::query()->whereKey($textSent->pluck('id')->all())->update(['delivery' => Delivery::Sent]);
         }
 
-        $this->translate($conversation, $pending);
+        $autoTranslation = $this->translate($conversation, $pending);
         $thread = $topics->ensureOpen($conversation);
 
         foreach ($this->batches($pending->values()) as [$messages, $html, $silent, $files]) {
@@ -290,6 +293,16 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
 
         Cache::forget(self::upToKey($conversation->id));
 
+        if ($autoTranslation && $conversation->visitor_language !== null && $conversation->translate_to !== null) {
+            $from = Languages::label($conversation->visitor_language);
+            $telegram->sendMessage(
+                $topics->chatId(),
+                '🌐 Translation on automatically: <b>'.$from.' → '.Languages::label($conversation->translate_to).'</b>. '
+                    .'Your replies go out in <b>'.$from.'</b>. Off: ⚙️ Actions → 🚫 Off, or /translate off.',
+                $thread,
+            );
+        }
+
         // The visitor wrote: the topic shows ❗ again, reopened if it was closed.
         $topics->sync($conversation->refresh());
         RefreshDashboard::dispatch();
@@ -301,12 +314,15 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
      * The detected language is the visitor's, which their replies go out in.
      *
      * @param  Collection<int, Message>  $pending
+     * @return bool translation was just turned on by translation.auto
      */
-    private function translate(Conversation $conversation, Collection $pending): void
+    private function translate(Conversation $conversation, Collection $pending): bool
     {
+        $auto = $this->detectLanguage($conversation, $pending);
+
         $target = $conversation->translate_to;
         if ($target === null) {
-            return;
+            return $auto;
         }
 
         $translator = app(TranslationService::class);
@@ -329,6 +345,58 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
                 $message->forceFill(['translation' => $translation->toArray()])->save();
             }
         }
+
+        return $auto;
+    }
+
+    /**
+     * translation.auto: the first visitor message long enough to tell
+     * tells the visitor's language; one other than the managers' turns
+     * translation on for the conversation. Once: a known visitor language
+     * (found here, or by /translate) stops it, so a manager's Off stays off.
+     * A translator that cannot answer now leaves it to the next message.
+     *
+     * @param  Collection<int, Message>  $pending
+     */
+    private function detectLanguage(Conversation $conversation, Collection $pending): bool
+    {
+        if (config('threadlive.translation.auto', false) !== true
+            || $conversation->translate_to !== null
+            || $conversation->visitor_language !== null) {
+            return false;
+        }
+
+        $translator = app(TranslationService::class);
+        if (! $translator->enabled()) {
+            return false;
+        }
+
+        $target = $translator->defaultTarget();
+
+        foreach ($pending as $message) {
+            // "ok", "hi": too short to tell a language by.
+            if ($message->direction !== Direction::Visitor || mb_strlen(trim($message->body)) < self::DETECT_MIN_CHARS) {
+                continue;
+            }
+
+            $translation = $translator->translate($message->body, $target);
+            if ($translation === null || $translation->source === '') {
+                return false;
+            }
+
+            if ($translation->isSameLanguage()) {
+                $conversation->forceFill(['visitor_language' => $translation->source])->save();
+
+                return false;
+            }
+
+            $conversation->forceFill(['translate_to' => $target, 'visitor_language' => $translation->source])->save();
+            $message->forceFill(['translation' => $translation->toArray()])->save();
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -451,11 +519,15 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
             .$translated->map(fn (Message $m) => e($m->translation['text'] ?? ''))->implode("\n\n");
     }
 
-    /** Text in the visitor's language, as a quote; collapsed when long. */
+    /**
+     * Text in the visitor's language, as a quote; collapsed when long. Ends
+     * with a line break: Telegram Desktop draws a short line right after a
+     * short quote inside the quote ("Hi🌐 EN → RU", seen 2026-11-25).
+     */
     public static function quote(string $escapedHtml): string
     {
         $tag = mb_strlen($escapedHtml) > self::LONG_QUOTE ? '<blockquote expandable>' : '<blockquote>';
 
-        return $tag.$escapedHtml.'</blockquote>';
+        return $tag.$escapedHtml."</blockquote>\n";
     }
 }

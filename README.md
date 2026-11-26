@@ -55,19 +55,50 @@ offline e-mail, cleanup).
 
 Each conversation is a topic named for its state — `❗ Anna · #12` waiting,
 `💬 Maria → Anna · #12` answered, `✅` closed — with a card about the visitor
-(🙋 Take / ✅ Close). Whatever a manager writes in the topic goes to the
-visitor; a message starting `//` is a note that never does. Photos and
-documents go both ways.
+(🙋 Take / ✅ Close / ⚙️ Actions — buttons for translation and your
+commands, so nobody has to remember them). Whatever a manager writes in the
+topic goes to the visitor; a message starting `//` is a note that never
+does. Photos and documents go both ways.
 
 | In the group | |
 |---|---|
+| `/menu` | the ⚙️ buttons at the bottom of the topic |
 | `/close` | close the conversation |
-| `/translate [ru\|off]` | translate this conversation both ways (DeepL built in) |
+| `/translate [ru\|off]` | translate this conversation both ways (Google Gemini and DeepL built in); with `translation.auto` it turns on by itself for a visitor in another language |
 | `/find 12` · `/find anna@example.com` · `/find refund` | find conversations |
+| `/faq` | the widget's quick answers as `faq.json`; send one back with the caption `/faq` to replace them |
 | `/your_command …` | your own: `php artisan threadlive:make-command Invoice` |
 
 General keeps a pinned dashboard: who is waiting and for how long, who is
 answering what, messages that could not be delivered.
+
+### Quick answers (FAQ)
+
+Answers a visitor opens on the widget's first screen without writing to
+anyone — and if they write after all, the card shows which ones they read.
+
+```json
+[
+  { "id": "invoice", "question": "Where is my invoice?", "answer": "Account → Invoices.\nEach has a PDF." },
+  {
+    "id": "hours",
+    "question": { "en": "When do you answer?", "uk": "Коли ви відповідаєте?" },
+    "answer": { "en": "Every day, 9:00–18:00.", "uk": "Щодня, 9:00–18:00." },
+    "show": false
+  }
+]
+```
+
+Send it in the group with the caption `/faq`, or run
+`php artisan threadlive:faq import faq.json`. The whole file is checked
+first: with any mistake nothing changes and the bot lists what is wrong.
+A plain text is in `language.default`; `show: false` keeps an entry out of
+the widget. With `faq.translate` on, the translation driver fills in the
+`faq.languages` an entry lacks — never replacing what you wrote.
+
+The chat speaks each visitor's language when it has a text in it (their
+browser's), else `language.default`; `language.browser = false` makes it
+always the default.
 
 ## Settings
 
@@ -81,7 +112,7 @@ and keeps your values.
 `THREADLIVE_ENABLED`, `THREADLIVE_BOT_TOKEN`, `THREADLIVE_GROUP_ID`,
 `THREADLIVE_WEBHOOK_SECRET`, `THREADLIVE_TURNSTILE_SITE_KEY`,
 `THREADLIVE_TURNSTILE_SECRET`, `THREADLIVE_QUEUE_CONNECTION`,
-`THREADLIVE_TRANSLATION_KEY`.
+`THREADLIVE_TRANSLATION_KEY` (DeepL), `THREADLIVE_GEMINI_KEY` (Google Gemini).
 
 - **Spam:** set the two Cloudflare Turnstile keys and a guest's first message
   carries a Turnstile check.
@@ -95,6 +126,7 @@ and keeps your values.
 |---|---|
 | `threadlive:install` | publish config, migration, ChatHost; `.env` keys |
 | `threadlive:config` | create the config, or add new settings to yours |
+| `threadlive:faq import faq.json` · `threadlive:faq export [faq.json]` | the widget's quick answers |
 | `threadlive:setup [--local]` | check and connect Telegram |
 | `threadlive:listen` | take updates by polling (local development) |
 | `threadlive:status` | webhook state, conversation counts, undelivered messages |

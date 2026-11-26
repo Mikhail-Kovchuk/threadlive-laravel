@@ -4,6 +4,41 @@ All notable changes to `threadlive/threadlive-laravel`. The widget,
 `threadlive-react`, is released with the same version numbers; use the two
 at the same version.
 
+## Unreleased
+
+- **Fixes:** a delivery job lost before it ran no longer blocks the
+  conversation's later messages (its lock expires after 60 s); the `deepl`
+  driver without a key is off instead of failing every translation.
+
+- **Google Gemini translation.** `translation.driver = 'gemini'` with
+  `THREADLIVE_GEMINI_KEY` and the new `gemini` block (model, default
+  `gemini-3.5-flash-lite`; thinking level). DeepL stays a driver. Run `php artisan threadlive:config` to add
+  the block to a published config.
+- **Translation by itself** (`translation.auto`, default false): the first
+  message of a conversation tells the visitor's language; one other than
+  `translation.target` turns translation on, with a silent line in the
+  topic. Once per conversation — a manager's 🚫 Off stays off. One
+  translation per new conversation.
+- **Buttons instead of commands.** ⚙️ Actions on the visitor card opens,
+  in place, one button per translation language (the current one ticked)
+  and one per manager command (it asks for its argument); `/menu` posts the
+  same buttons at the bottom of the topic. `menu` is now a reserved command
+  name. Run `php artisan threadlive:setup` to list `/menu` in the group.
+- **Quick answers (FAQ).** Send a `faq.json` in the group with the caption
+  `/faq` (checked whole: with a mistake nothing changes, and the bot lists
+  what is wrong); `/faq` alone sends the current file back. Also
+  `php artisan threadlive:faq import|export`. Texts may come in several
+  languages (`{"en": "…", "uk": "…"}`); with `faq.translate` on, the
+  translation driver fills in `faq.languages` an entry lacks, in the
+  background. `/bootstrap` serves the list; the answers a visitor opened
+  show on the visitor card. `faq` is now a reserved command name.
+- **The chat speaks the visitor's language.** New `language` block:
+  `browser` (default true) picks the browser's language when there is a
+  text in it, else `default` (`en`). `/bootstrap` now returns `languages`
+  (best first) for the widget's own texts and serves the FAQ in that
+  language. Run `php artisan threadlive:config` to add the `language` and
+  `faq` blocks.
+
 ## 0.1.0 — 2026-11-19
 
 First release.

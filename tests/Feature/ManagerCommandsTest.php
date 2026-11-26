@@ -105,7 +105,9 @@ describe('manager commands', function () {
 
         expect(telegramCalls('setMyCommands')[0])->toMatchArray([
             'commands' => [
+                ['command' => 'menu', 'description' => 'Buttons for this conversation (in its topic)'],
                 ['command' => 'close', 'description' => 'Close this conversation (in its topic)'],
+                ['command' => 'faq', 'description' => 'Quick answers: get faq.json; send one with the caption /faq to replace it'],
                 ['command' => 'find', 'description' => 'Find a conversation: #number, e-mail, name or words from it'],
                 ['command' => 'lookup', 'description' => 'Look up a record by its code'],
             ],
