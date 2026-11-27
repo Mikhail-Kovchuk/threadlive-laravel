@@ -7,6 +7,7 @@ namespace Threadlive\Tests;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Orchestra\Testbench\TestCase as Orchestra;
+use Threadlive\Support\GroupSettings;
 use Threadlive\Tests\Fixtures\FakeChatHost;
 use Threadlive\ThreadliveServiceProvider;
 
@@ -20,6 +21,9 @@ abstract class TestCase extends Orchestra
         FakeChatHost::reset();
         // Jobs are run by hand where a test is about them.
         Queue::fake();
+        // What admins set from Telegram lives in a file: none left from the last test.
+        @unlink(GroupSettings::path());
+        GroupSettings::flush();
     }
 
     /**

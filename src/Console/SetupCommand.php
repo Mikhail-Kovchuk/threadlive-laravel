@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace Threadlive\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use InvalidArgumentException;
 use Threadlive\Assistant\AssistantService;
 use Threadlive\Telegram\Commands;
 use Threadlive\Telegram\Dashboard;
+use Threadlive\Telegram\Keyboards;
+use Threadlive\Telegram\SettingsTopic;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
 use Threadlive\Translation\TranslationService;
@@ -70,11 +73,12 @@ final class SetupCommand extends Command
             return self::FAILURE;
         }
 
-        $telegram->call('setMyCommands', [
-            'commands' => $menu,
-            'scope' => ['type' => 'chat', 'chat_id' => $chatId],
-        ]);
-        $this->pass('Commands', implode(' ', array_map(fn (array $c) => '/'.$c['command'], $menu)));
+        $scope = ['type' => 'chat', 'chat_id' => $chatId];
+        $menu === []
+            ? $telegram->call('deleteMyCommands', ['scope' => $scope])
+            : $telegram->call('setMyCommands', ['commands' => $menu, 'scope' => $scope]);
+        $this->pass('Commands', $menu === [] ? 'none in the "/" menu' : implode(' ', array_map(fn (array $c) => '/'.$c['command'], $menu)));
+        $this->keyboard($telegram, $chatId);
 
         if ($url !== null) {
             try {
@@ -97,6 +101,13 @@ final class SetupCommand extends Command
             $this->pass('Webhook', 'none (local): updates come through threadlive:listen');
         }
 
+        try {
+            app(SettingsTopic::class)->ensure();
+            $this->pass('Settings', 'the “'.SettingsTopic::NAME.'” topic, closed: admins write there, anyone sees it');
+        } catch (TelegramException $e) {
+            $this->components->warn('The “'.SettingsTopic::NAME.'” topic could not be made: '.$e->getMessage());
+        }
+
         $dashboard->refresh();
         $this->pass('Dashboard', 'posted in General');
 
@@ -109,6 +120,64 @@ final class SetupCommand extends Command
             : 'Telegram is set up. Try it: php artisan threadlive:test');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * The buttons under the message field in General — posted again on each
+     * run (the commands may have changed), the previous post removed. Topics
+     * get theirs with their first post. keyboard = false takes them away.
+     */
+    private function keyboard(TelegramClient $telegram, string $chatId): void
+    {
+        $keyboards = app(Keyboards::class);
+        $markup = $keyboards->general();
+        $previous = Cache::get(Keyboards::GENERAL_KEY);
+
+        if (($unknown = $keyboards->unknown()) !== []) {
+            $this->components->warn('threadlive.keyboard lists commands there are none of, left out: '.implode(', ', $unknown)
+                .'. Use the package\'s (menu, close, ai, translate, find, faq) or yours from threadlive.commands.');
+        }
+
+        if ($markup === null && ! is_int($previous)) {
+            return;
+        }
+
+        $buttons = $markup === null ? '' : implode(' ', array_merge(...array_map(
+            fn (array $row) => array_column($row, 'text'),
+            $markup['keyboard'],
+        )));
+
+        try {
+            $id = $telegram->sendMessage(
+                $chatId,
+                $markup === null ? '⌨️ The buttons are off.' : '⌨️ Buttons for the managers: '.$buttons,
+                null,
+                silent: true,
+                replyMarkup: $markup ?? ['remove_keyboard' => true],
+            );
+        } catch (TelegramException $e) {
+            $this->components->warn('The buttons under the message field were not posted: '.$e->getMessage());
+
+            return;
+        }
+
+        if (is_int($previous)) {
+            try {
+                $telegram->call('deleteMessage', ['chat_id' => $chatId, 'message_id' => $previous]);
+            } catch (TelegramException) {
+                // Deleted by hand already, or too old: the new post rules.
+            }
+        }
+
+        if ($markup === null) {
+            Cache::forget(Keyboards::GENERAL_KEY);
+            $this->pass('Buttons', 'off');
+
+            return;
+        }
+
+        Cache::forever(Keyboards::GENERAL_KEY, $id);
+        $this->pass('Buttons', $buttons.' in General; /menu /close… in each new topic');
     }
 
     /** @return array{id: int, username: string}|null */
@@ -200,8 +269,8 @@ final class SetupCommand extends Command
     }
 
     /**
-     * The group's "/" menu: /close plus the app's commands
-     * (config threadlive.commands). Null when the list is wrong.
+     * The group's "/" menu: config threadlive.command_menu picks from every
+     * command there is (null: all of them). Null when the app's list is wrong.
      *
      * @return list<array{command: string, description: string}>|null
      */
@@ -216,6 +285,7 @@ final class SetupCommand extends Command
         }
 
         $menu = [
+            ['command' => 'settings', 'description' => 'Settings: the FAQ and more'],
             ['command' => 'menu', 'description' => 'Buttons for this conversation (in its topic)'],
             ['command' => 'close', 'description' => 'Close this conversation (in its topic)'],
         ];
@@ -238,7 +308,23 @@ final class SetupCommand extends Command
             $menu[] = ['command' => $name, 'description' => mb_substr($description !== '' ? $description : $name, 0, 256)];
         }
 
-        return $menu;
+        $wanted = config('threadlive.command_menu', ['settings']);
+        if (! is_array($wanted)) {
+            return $menu; // null: all of them
+        }
+
+        $byName = array_column($menu, null, 'command');
+        $picked = [];
+        foreach ($wanted as $name) {
+            $name = is_string($name) ? strtolower(ltrim(trim($name), '/')) : '';
+            if (isset($byName[$name])) {
+                $picked[] = $byName[$name];
+            } elseif ($name !== '') {
+                $this->components->warn("threadlive.command_menu: there is no command “{$name}” (or it is off); left out.");
+            }
+        }
+
+        return $picked;
     }
 
     private function webhookUrl(): ?string

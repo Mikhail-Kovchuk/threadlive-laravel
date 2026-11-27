@@ -16,6 +16,7 @@ use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
 use Threadlive\Support\ChatLanguage;
 use Threadlive\Support\Faq;
+use Threadlive\Support\GroupSettings;
 use Threadlive\Support\WorkingHours;
 use Threadlive\Translation\Languages;
 use Threadlive\Translation\TranslationService;
@@ -34,9 +35,28 @@ final class AssistantService
         private readonly TranslationService $translation,
     ) {}
 
+    /** Switched on (from Telegram's ⚙️ Settings, else the config) and set up (a key). */
     public function enabled(): bool
     {
-        return config('threadlive.assistant.enabled', false) === true && $this->driver() !== null;
+        return $this->switchedOn() && $this->driver() !== null;
+    }
+
+    /** On, as the group's admins or the config say — set up or not. */
+    public function switchedOn(): bool
+    {
+        return GroupSettings::assistantEnabled() ?? config('threadlive.assistant.enabled', false) === true;
+    }
+
+    /**
+     * When it takes a new conversation: 'always', or 'off_hours' (only
+     * outside the support hours). Telegram's ⚙️ Settings, else the config.
+     *
+     * @return 'always'|'off_hours'
+     */
+    public function first(): string
+    {
+        return GroupSettings::assistantFirst()
+            ?? (config('threadlive.assistant.first', 'always') === 'off_hours' ? 'off_hours' : 'always');
     }
 
     /** A new (or reopened) conversation is the assistant's to answer. */
@@ -46,8 +66,7 @@ final class AssistantService
             return false;
         }
 
-        return config('threadlive.assistant.first', 'always') !== 'off_hours'
-            || ! WorkingHours::fromConfig()->isOpen(now());
+        return $this->first() !== 'off_hours' || ! WorkingHours::fromConfig()->isOpen(now());
     }
 
     public function name(): string
@@ -126,6 +145,14 @@ final class AssistantService
         return new DefaultPrompt;
     }
 
+    /** Who we are: what the group's admins set (/settings → Company), else config assistant.about. */
+    public function about(): string
+    {
+        $about = GroupSettings::about() ?? config('threadlive.assistant.about', '');
+
+        return is_string($about) ? trim($about) : '';
+    }
+
     /** What the assistant is told before it reads the conversation. */
     public function instructions(Conversation $conversation): string
     {
@@ -135,7 +162,7 @@ final class AssistantService
     /** What a prompt may use, for this conversation. */
     public function context(Conversation $conversation): PromptContext
     {
-        $about = config('threadlive.assistant.about', '');
+        $about = $this->about();
         $hours = WorkingHours::fromConfig();
         $open = $hours->isOpen(now());
         $zone = ' ('.$hours->tz.')';
@@ -152,7 +179,7 @@ final class AssistantService
 
         return new PromptContext(
             name: $this->name(),
-            about: is_string($about) ? trim($about) : '',
+            about: $about,
             now: now()->setTimezone($hours->tz)->format('l, j F Y, H:i').$zone,
             hours: $hours->from === $hours->to ? 'around the clock' : $hours->from.'–'.$hours->to.$zone,
             managersAreIn: $open,

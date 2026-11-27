@@ -72,6 +72,39 @@ does. Photos and documents go both ways.
 General keeps a pinned dashboard: who is waiting and for how long, who is
 answering what, messages that could not be delivered.
 
+In a conversation's topic the commands are also buttons under the message
+field: `/menu` · `/close` · `/ai` · `/translate`. The settings have their own
+closed topic, "⚙️ Settings" (the "/" menu's `/settings` leads there):
+📚 FAQ · 🏢 Company (what the AI assistant knows about you) · 🕘 Hours ·
+🤖 Assistant (on or off, always or only outside the hours) · 👥 Mentions
+(who is called by name) · 📊 Report (the last seven days). Anyone sees
+them; the group's admins change them right there; their values (in
+`storage/app/threadlive/settings.json`) override the config's
+(`assistant.about`, `hours`, `assistant.enabled` / `first`, `mention`)
+until reset.
+
+Every Monday at 09:00 (in the support hours' zone; `report` in the config)
+General gets a report: new and closed conversations, what the assistant
+handled alone, conversations nobody answered, the usual wait for a
+manager's first reply, who answered how many, and the visitors' ratings —
+after a conversation is closed the widget asks 👍 / 👎 and a comment
+(`rating`), and the topic gets it, a 👎 with sound.
+
+Choose your own buttons in `config/threadlive.php`:
+
+```php
+'command_menu' => ['settings', 'invoice'],   // the "/" menu; null: every command
+'keyboard' => [
+    'enabled' => true,
+    'general' => null,                       // General: none
+    'topic' => ['menu', 'close', 'invoice'], // null: the package's set
+],
+```
+
+Each name is a command of the package's or one of yours (`commands`, made
+with `threadlive:make-command` — e.g. a search in your own database). Run
+`threadlive:setup` after a change.
+
 ### Quick answers (FAQ)
 
 Answers a visitor opens on the widget's first screen without writing to
@@ -140,6 +173,9 @@ and keeps your values.
 
 - **Spam:** set the two Cloudflare Turnstile keys and a guest's first message
   carries a Turnstile check.
+- **Rating and report:** `rating` (default true) has the widget ask for
+  👍 / 👎 once a conversation is closed; `report` sets the weekly report
+  (`weekly`, `day`, `at`).
 - **Offline e-mail:** replies a visitor has not read in the widget go to the
   e-mail they left, through your app's mailer. Reword it with
   `php artisan vendor:publish --tag=threadlive-views`.
@@ -159,7 +195,8 @@ and keeps your values.
 | `threadlive:make-command Name` | a command for managers |
 | `threadlive:make-prompt` | your own prompt for the AI assistant |
 | `threadlive:assistant show` · `threadlive:assistant ask "…"` | print the assistant's prompt · ask it once |
-| `threadlive:maintain`, `threadlive:prune` | scheduled by the package |
+| `threadlive:report [--days=7] [--print]` | the report in General (weekly by the schedule), or printed |
+| `threadlive:maintain`, `threadlive:prune`, `threadlive:report` | scheduled by the package |
 
 ## License
 

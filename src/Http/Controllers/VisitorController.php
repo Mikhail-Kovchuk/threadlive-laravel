@@ -22,6 +22,7 @@ use Threadlive\Enums\Delivery;
 use Threadlive\Enums\Direction;
 use Threadlive\Events\ConversationStarted;
 use Threadlive\Events\VisitorMessageReceived;
+use Threadlive\Jobs\AnnounceRating;
 use Threadlive\Jobs\AnswerWithAssistant;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
@@ -475,7 +476,53 @@ final class VisitorController
     }
 
     /**
-     * @return array{status: string, unread: int, email: string|null, active: bool, handler: string, assistant_typing: bool}
+     * 👍 / 👎 for a closed conversation, and then — the same call again —
+     * a comment. Told in the topic (AnnounceRating).
+     */
+    public function rate(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'rating' => ['required', 'string', 'in:'.Conversation::GOOD.','.Conversation::BAD],
+            'comment' => ['nullable', 'string', 'max:1000'],
+        ], [
+            'rating.*' => 'Choose 👍 or 👎.',
+            'comment.max' => 'The comment may not be longer than :max characters.',
+        ]);
+
+        $conversation = $this->conversationOr404($request);
+        abort_if(! $this->asksRating($conversation), 422, 'There is nothing to rate yet.');
+
+        $comment = is_string($data['comment'] ?? null) && trim($data['comment']) !== '' ? trim($data['comment']) : null;
+        $wasRated = $conversation->ratedSinceClosed();
+
+        $conversation->forceFill([
+            'rating' => $data['rating'],
+            // A comment sent once stays when only the thumb changes.
+            'rating_comment' => $comment ?? ($wasRated ? $conversation->rating_comment : null),
+            'rated_at' => now(),
+        ]);
+
+        if ($conversation->isDirty(['rating', 'rating_comment']) || ! $wasRated) {
+            $conversation->save();
+            AnnounceRating::dispatch($conversation->id);
+        }
+
+        return response()->json(['conversation' => $this->conversationJson($conversation)]);
+    }
+
+    /**
+     * Asked once a conversation is closed (config rating), when anyone —
+     * a manager or the assistant — answered in it.
+     */
+    private function asksRating(Conversation $conversation): bool
+    {
+        return config('threadlive.rating', true) === true
+            && $conversation->status === ConversationStatus::Closed
+            && $conversation->messages()->where('direction', Direction::Agent)->exists();
+    }
+
+    /**
+     * @return array{status: string, unread: int, email: string|null, active: bool, handler: string, assistant_typing: bool, rating: array{value: string|null, comment: string|null}|null}
      */
     private function conversationJson(Conversation $conversation): array
     {
@@ -487,6 +534,12 @@ final class VisitorController
             // 'ai': the assistant answers — the widget offers "Talk to a person".
             'handler' => $conversation->withAssistant() ? Conversation::AI : Conversation::HUMAN,
             'assistant_typing' => $conversation->withAssistant() && AnswerWithAssistant::isTyping($conversation->id),
+            // Null: no rating asked. value null: asked, not given since the close.
+            'rating' => $this->asksRating($conversation)
+                ? ($conversation->ratedSinceClosed()
+                    ? ['value' => $conversation->rating, 'comment' => $conversation->rating_comment]
+                    : ['value' => null, 'comment' => null])
+                : null,
         ];
     }
 

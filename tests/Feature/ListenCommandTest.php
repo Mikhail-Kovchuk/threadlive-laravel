@@ -113,5 +113,5 @@ it('sets up for local work: checks everything, sets no webhook, needs no HTTPS',
         ->assertSuccessful();
 
     expect(telegramCalls('setWebhook'))->toBeEmpty()
-        ->and(telegramCalls('pinChatMessage'))->toHaveCount(1);
+        ->and(telegramCalls('pinChatMessage'))->toHaveCount(2); // the settings panel, the dashboard
 });

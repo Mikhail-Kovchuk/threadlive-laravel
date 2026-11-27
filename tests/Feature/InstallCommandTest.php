@@ -35,7 +35,7 @@ it('publishes a later migration of the package into an app that has the first, a
     $published = glob(database_path('migrations/*_threadlive_tables.php'));
     sort($published);
     expect(array_map(fn (string $f) => (string) preg_replace('/^\d{4}_\d{2}_\d{2}_\d{6}_/', '', basename($f)), $published))
-        ->toBe(['create_threadlive_tables.php', 'add_assistant_to_threadlive_tables.php']);
+        ->toBe(['create_threadlive_tables.php', 'add_assistant_to_threadlive_tables.php', 'add_rating_to_threadlive_tables.php']);
 });
 
 it('publishes the migrations of a fresh install in their order', function () {
@@ -44,7 +44,8 @@ it('publishes the migrations of a fresh install in their order', function () {
     $published = glob(database_path('migrations/*_threadlive_tables.php'));
     sort($published);
     expect(basename($published[0]))->toEndWith('_create_threadlive_tables.php')
-        ->and(basename($published[1]))->toEndWith('_add_assistant_to_threadlive_tables.php');
+        ->and(basename($published[1]))->toEndWith('_add_assistant_to_threadlive_tables.php')
+        ->and(basename($published[2]))->toEndWith('_add_rating_to_threadlive_tables.php');
 });
 
 it('adds the .env keys once, with a generated webhook secret', function () {

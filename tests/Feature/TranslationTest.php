@@ -273,9 +273,11 @@ it('lists /translate in the group\'s menu when translation is set up', function 
         'getChatMember' => ['status' => 'administrator', 'can_manage_topics' => true, 'can_delete_messages' => true, 'can_pin_messages' => true],
     ]);
 
+    config()->set('threadlive.command_menu', null); // all of them
+
     $this->artisan('threadlive:setup', ['--local' => true])->assertSuccessful();
 
-    expect(collect(telegramCalls('setMyCommands')[0]['commands'])->pluck('command')->all())->toBe(['menu', 'close', 'translate', 'faq', 'find']);
+    expect(collect(telegramCalls('setMyCommands')[0]['commands'])->pluck('command')->all())->toBe(['settings', 'menu', 'close', 'translate', 'faq', 'find']);
 });
 
 describe('DeepL', function () {

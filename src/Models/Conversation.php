@@ -45,6 +45,9 @@ use Threadlive\Enums\TopicState;
  * @property Carbon|null $handed_off_at
  * @property string|null $handoff_reason
  * @property int $assistant_replies
+ * @property string|null $rating 'good' or 'bad'
+ * @property string|null $rating_comment
+ * @property Carbon|null $rated_at
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
@@ -90,7 +93,18 @@ class Conversation extends Model
             'closed_at' => 'datetime',
             'handed_off_at' => 'datetime',
             'assistant_replies' => 'integer',
+            'rated_at' => 'datetime',
         ];
+    }
+
+    public const GOOD = 'good';
+
+    public const BAD = 'bad';
+
+    /** Rated since it was last closed (a rating is asked once per close). */
+    public function ratedSinceClosed(): bool
+    {
+        return $this->rated_at !== null && $this->closed_at !== null && $this->rated_at->gte($this->closed_at);
     }
 
     /**

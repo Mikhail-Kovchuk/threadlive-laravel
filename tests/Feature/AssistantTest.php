@@ -354,7 +354,7 @@ describe('/ai in the topic', function () {
         Queue::assertPushed(AnswerWithAssistant::class);
     });
 
-    it('says so when the assistant is not set up', function () {
+    it('says so when the assistant is off for the group, or not set up', function () {
         fakeTelegram();
         config()->set('threadlive.assistant.enabled', false);
         [$conversation] = aiConversation();
@@ -362,7 +362,14 @@ describe('/ai in the topic', function () {
         telegramUpdate(['message' => managerMessage(300, '/ai on')]);
 
         expect($conversation->refresh()->handler)->toBe(Conversation::HUMAN)
-            ->and(telegramCalls('sendMessage')[0]['text'])->toContain('not set up');
+            ->and(telegramCalls('sendMessage')[0]['text'])->toContain('off for the whole group');
+
+        config()->set('threadlive.assistant.enabled', true);
+        config()->set('threadlive.assistant.driver', 'NoSuchClass');
+        telegramUpdate(['message' => managerMessage(300, '/ai on', 5001)]);
+
+        expect($conversation->refresh()->handler)->toBe(Conversation::HUMAN)
+            ->and(telegramCalls('sendMessage')[1]['text'])->toContain('not set up');
     });
 
     it('is a button in the action panel', function () {

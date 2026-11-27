@@ -4,6 +4,58 @@ All notable changes to `threadlive/threadlive-laravel`. The widget,
 `threadlive-react`, is released with the same version numbers; use the two
 at the same version.
 
+## 0.3.0 — 2026-11-27
+
+- **Buttons under the message field** in each conversation's topic
+  (new `keyboard` block): `/menu` · `/close` · `/ai` · `/translate` (those
+  that are on) — one tap sends the command there. A new topic gets them
+  with its first post; Telegram keeps one keyboard per topic. General has
+  none unless `keyboard.general` lists some. List your own in
+  `keyboard.topic` / `keyboard.general` — the package's commands or yours
+  from `commands` (e.g. `['menu', 'close', 'order']`);
+  `keyboard.enabled = false` for none.
+- **`/settings`**, and a shorter "/" menu. The group's "/" menu lists only
+  `/settings` (new `command_menu`, `['settings']`; null for every command);
+  every command still works when typed. The settings have their own
+  topic, "⚙️ Settings", made by `threadlive:setup` (again if deleted),
+  with the panel pinned and the topic closed — admins write there, anyone
+  sees it; `/settings` elsewhere answers with a button to it. The panel:
+  📚 FAQ (the current `faq.json`, or how to load one),
+  🏢 Company (the text the AI assistant knows about you) and 🕘 Hours (the
+  support hours: `09:00-18:00 Europe/Kyiv`, `24/7`). Anyone sees them; only
+  the group's admins change them — ✏️ Change, then the new value as the
+  admin's next message there (or a reply), kept in
+  `storage/app/threadlive/settings.json` and overrides `assistant.about` /
+  `hours` until "↩️ The config's". Nothing quotes the `/settings` message:
+  it is removed. `settings` is now a reserved command name. Run
+  `php artisan threadlive:config` and `threadlive:setup`.
+- **More in ⚙️ Settings** (a second row on the panel):
+  🤖 Assistant — on or off, and "always" or "only outside the support
+  hours", over `assistant.enabled` / `assistant.first`, edited in place by
+  the group's admins (it will not switch on without a key); 👥 Mentions —
+  the managers called by name (`@maria @oleh`, or `none`), over `mention`;
+  📊 Report — the last seven days, posted there. Run `threadlive:setup` to
+  post the new panel.
+- **The visitor rates a closed conversation** (new `rating`, default
+  true): once someone — a manager or the assistant — answered, the widget
+  asks 👍 / 👎 and then for a comment. `POST /rating` (`rating`:
+  `good`|`bad`, `comment`); `conversation.rating` in the API (null when
+  none is asked). The topic gets it — 👎 with sound, 👍 silent, the comment
+  editing the same post, translated when the topic is. Asked again after
+  the next close.
+- **A weekly report in General** (new `report` block: `weekly`, `day`,
+  `at` in the support hours' zone; Monday 09:00 by default): new and closed
+  conversations, the assistant (alone / passed on), conversations nobody
+  answered, the median wait for a manager's first reply, who answered how
+  many, the ratings with the latest 👎 comments.
+  `php artisan threadlive:report [--days=7] [--print]` any time.
+- **Schema:** a new migration (`rating`, `rating_comment`, `rated_at` on
+  conversations). `php artisan threadlive:install` publishes it and runs
+  migrations; `php artisan threadlive:config` adds `rating` and `report`.
+- **Fix:** an unknown command addressed to this bot by name
+  (`/x@ThisBot`, as the "/" menu sends it) is answered "Unknown command"
+  instead of ignored as another bot's.
+
 ## 0.2.1 — 2026-11-26
 
 - **Fix:** `threadlive:setup` with an address Telegram cannot reach (a

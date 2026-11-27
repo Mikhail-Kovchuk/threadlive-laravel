@@ -142,8 +142,40 @@ return [
     // a manager and nobody has it yet — the AI assistant's handoff, a
     // waiting alert. A mention reaches them even with the group muted. A
     // conversation a manager already has calls that manager instead, in its
-    // topic. e.g. ['@maria', '@oleh']; [] = no mentions.
+    // topic. e.g. ['@maria', '@oleh']; [] = no mentions. The group's admins
+    // can change it in ⚙️ Settings → 👥 Mentions.
     'mention' => [],
+
+    // A report in General every week: conversations, what the AI assistant
+    // did, how soon the managers answered and who did, the visitors'
+    // ratings. `day` and `at` are in the support hours' zone. Also any time:
+    // ⚙️ Settings → 📊 Report, or php artisan threadlive:report.
+    'report' => [
+        'weekly' => true,
+        'day' => 'monday',
+        'at' => '09:00',
+    ],
+
+    // The group's "/" menu: the commands listed when a manager types "/"
+    // (every command still works when typed). /settings leads to the
+    // group's settings topic. Names without the "/": the package's
+    // (settings, menu, close, translate, ai, faq, find) or yours from
+    // `commands`. null: all of them. Run threadlive:setup after a change.
+    'command_menu' => ['settings'],
+
+    // Buttons under the message field in the group, one tap instead of
+    // typing a command. `general`: in General ([] or null: none); `topic`:
+    // in each conversation's topic (null: menu, close, ai, translate —
+    // those that are on). Names as in `command_menu`. threadlive:setup posts
+    // General's; a topic gets its own with its first post.
+    // enabled false: none (run threadlive:setup to take General's away).
+    'keyboard' => [
+        'enabled' => true,
+        'general' => null,
+        // 'general' => ['find', 'order'],
+        'topic' => null,
+        // 'topic' => ['menu', 'close', 'order'],
+    ],
 
     // Translation, switched on per conversation with /translate in its topic:
     // the visitor's messages reach the managers with a translation into
@@ -238,7 +270,8 @@ return [
     // a website's live chat). The AI never sees ChatHost's card lines or
     // admin links.
     // daily_limit: answers a day for all conversations; past it, new
-    // questions go straight to the managers.
+    // questions go straight to the managers. The group's admins can switch
+    // it on or off, and change `first` and `about`, in ⚙️ Settings.
     'assistant' => [
         'enabled' => false,
         // 'gemini', or a class implementing Threadlive\Contracts\Assistant.
@@ -255,6 +288,11 @@ return [
         'history' => 20,
         'daily_limit' => 500,
     ],
+
+    // Once a conversation is closed, the widget asks the visitor to rate it
+    // (👍 / 👎, then a comment if they like) — when anyone answered in it.
+    // The rating shows in the topic (a 👎 with sound) and in the report.
+    'rating' => true,
 
     // The header's "go elsewhere" button — your support account in Telegram,
     // WhatsApp, an e-mail address. url null: no button. Only https, http,

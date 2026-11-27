@@ -20,6 +20,7 @@ use Threadlive\Enums\Direction;
 use Threadlive\Enums\TopicState;
 use Threadlive\Models\Conversation;
 use Threadlive\Models\Message;
+use Threadlive\Telegram\Keyboards;
 use Threadlive\Telegram\TelegramClient;
 use Threadlive\Telegram\TelegramException;
 use Threadlive\Telegram\Topics;
@@ -260,6 +261,10 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
 
         $autoTranslation = $this->translate($conversation, $pending);
         $thread = $topics->ensureOpen($conversation);
+        // A new topic gets the managers' keyboard (/menu, /close…) with the
+        // first post: the card cannot carry it, its buttons are inline.
+        $keyboards = app(Keyboards::class);
+        $keyboardAsked = false;
 
         foreach ($this->batches($pending->values()) as [$messages, $html, $silent, $files]) {
             $ids = $messages->pluck('id')->all();
@@ -267,7 +272,18 @@ final class DeliverVisitorMessages implements ShouldBeUniqueUntilProcessing, Sho
 
             if ($html !== null && $messageId === null) {
                 foreach (self::fit($html, $messages) as $i => $part) {
-                    $partId = $telegram->sendMessage($topics->chatId(), $part, $thread, $silent || $quiet || $i > 0);
+                    $keyboard = $keyboardAsked ? null : $keyboards->forNewTopic($thread);
+                    $keyboardAsked = true;
+
+                    try {
+                        $partId = $telegram->sendMessage($topics->chatId(), $part, $thread, $silent || $quiet || $i > 0, replyMarkup: $keyboard);
+                    } catch (TelegramException $e) {
+                        if ($keyboard !== null) {
+                            $keyboards->forget($thread);
+                        }
+
+                        throw $e;
+                    }
                     $messageId ??= $partId;
                 }
                 Message::query()->whereKey($ids)->update(['telegram_message_id' => $messageId]);

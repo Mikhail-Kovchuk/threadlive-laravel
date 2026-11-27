@@ -22,6 +22,7 @@ use Threadlive\Console\MaintainCommand;
 use Threadlive\Console\MakeCommandCommand;
 use Threadlive\Console\MakePromptCommand;
 use Threadlive\Console\PruneCommand;
+use Threadlive\Console\ReportCommand;
 use Threadlive\Console\RetryFailedCommand;
 use Threadlive\Console\SetupCommand;
 use Threadlive\Console\StatusCommand;
@@ -32,6 +33,7 @@ use Threadlive\Events\VisitorSignedIn;
 use Threadlive\Jobs\AnnounceSignIn;
 use Threadlive\Jobs\AnswerWithAssistant;
 use Threadlive\Jobs\DeliverVisitorMessages;
+use Threadlive\Support\WorkingHours;
 use Threadlive\Telegram\TelegramClient;
 
 /**
@@ -75,6 +77,33 @@ class ThreadliveServiceProvider extends ServiceProvider
         });
     }
 
+    /**
+     * When the weekly report goes to General (config report), in the
+     * support hours' zone; null when it is off. Inner keys default here: a
+     * config published before them lacks them.
+     *
+     * @return array{day: int, at: string, tz: string}|null
+     */
+    public static function weeklyReport(): ?array
+    {
+        $report = config('threadlive.report', []);
+        $report = is_array($report) ? $report : [];
+
+        if (($report['weekly'] ?? true) !== true) {
+            return null;
+        }
+
+        $days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        $day = array_search(strtolower(trim((string) ($report['day'] ?? 'monday'))), $days, true);
+        $at = (string) ($report['at'] ?? '09:00');
+
+        return [
+            'day' => $day === false ? 1 : $day,
+            'at' => preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $at) === 1 ? $at : '09:00',
+            'tz' => WorkingHours::fromConfig()->tz,
+        ];
+    }
+
     public function boot(): void
     {
         $this->loadRoutesFrom(__DIR__.'/../routes/threadlive.php');
@@ -115,6 +144,14 @@ class ThreadliveServiceProvider extends ServiceProvider
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
             $schedule->command('threadlive:maintain')->everyFiveMinutes()->withoutOverlapping();
             $schedule->command('threadlive:prune')->daily()->withoutOverlapping();
+
+            $report = self::weeklyReport();
+            if ($report !== null) {
+                $schedule->command('threadlive:report')
+                    ->weeklyOn($report['day'], $report['at'])
+                    ->timezone($report['tz'])
+                    ->withoutOverlapping();
+            }
         });
 
         if ($this->app->runningInConsole()) {
@@ -132,6 +169,7 @@ class ThreadliveServiceProvider extends ServiceProvider
                 FaqCommand::class,
                 AssistantCommand::class,
                 MakePromptCommand::class,
+                ReportCommand::class,
             ]);
 
             $this->publishes([

@@ -1,5 +1,9 @@
 <?php
 
+use Illuminate\Support\Facades\Cache;
+use Threadlive\Telegram\Keyboards;
+use Threadlive\Tests\Fixtures\LookupCommand;
+
 function healthyGroup(array $overrides = []): void
 {
     fakeTelegram([
@@ -35,8 +39,8 @@ it('checks everything, sets the webhook with the secret, and posts the dashboard
         'secret_token' => 'webhook-secret',
         'allowed_updates' => ['message', 'edited_message', 'callback_query'],
     ])
-        ->and(telegramCalls('sendMessage')[0]['text'])->toContain('Waiting for a reply (0)')
-        ->and(telegramCalls('pinChatMessage'))->toHaveCount(1);
+        ->and(collect(telegramCalls('sendMessage'))->last()['text'])->toContain('Waiting for a reply (0)')
+        ->and(telegramCalls('pinChatMessage'))->toHaveCount(2); // the settings panel, the dashboard
 });
 
 it('says Topics are off, and sets nothing', function () {
@@ -91,6 +95,57 @@ it('explains an address Telegram cannot reach, pointing at --local, instead of f
         ->assertFailed();
 
     expect(telegramCalls('pinChatMessage'))->toBeEmpty();
+});
+
+it('puts no buttons under the field in General by default', function () {
+    healthyGroup();
+
+    $this->artisan('threadlive:setup')->assertSuccessful();
+
+    expect(collect(telegramCalls('sendMessage'))->contains(fn (array $c) => isset($c['reply_markup']['keyboard'])))->toBeFalse();
+});
+
+it('puts the buttons keyboard.general lists in General, replacing the previous ones', function () {
+    healthyGroup();
+    config()->set('threadlive.keyboard.general', ['find', 'faq']);
+    Cache::forever(Keyboards::GENERAL_KEY, 555);
+
+    $this->artisan('threadlive:setup')->assertSuccessful();
+
+    $post = collect(telegramCalls('sendMessage'))->first(fn (array $c) => isset($c['reply_markup']['keyboard']));
+    expect($post['message_thread_id'] ?? null)->toBeNull()
+        ->and($post['reply_markup']['is_persistent'])->toBeTrue()
+        ->and(array_column($post['reply_markup']['keyboard'][0], 'text'))->toBe(['/find', '/faq'])
+        ->and(telegramCalls('deleteMessage')[0]['message_id'])->toBe(555)
+        ->and(Cache::get(Keyboards::GENERAL_KEY))->not->toBe(555);
+});
+
+it('shows the buttons the app lists, its own commands among them, and names the unknown ones', function () {
+    healthyGroup();
+    config()->set('threadlive.commands', [LookupCommand::class]);
+    config()->set('threadlive.keyboard.general', ['/find', 'lookup', 'nonsense']);
+    config()->set('threadlive.keyboard.topic', ['menu', 'lookup']);
+
+    $this->artisan('threadlive:setup')
+        ->expectsOutputToContain('left out: nonsense')
+        ->assertSuccessful();
+
+    $post = collect(telegramCalls('sendMessage'))->first(fn (array $c) => isset($c['reply_markup']['keyboard']));
+    expect(array_column($post['reply_markup']['keyboard'][0], 'text'))->toBe(['/find', '/lookup'])
+        ->and(array_column(app(Keyboards::class)->topic()['keyboard'][0], 'text'))->toBe(['/menu', '/lookup']);
+});
+
+it('takes General\'s buttons away with keyboard.enabled = false', function () {
+    healthyGroup();
+    config()->set('threadlive.keyboard.enabled', false);
+
+    $this->artisan('threadlive:setup')->assertSuccessful();
+    expect(collect(telegramCalls('sendMessage'))->filter(fn (array $c) => isset($c['reply_markup']['keyboard'])))->toBeEmpty();
+
+    Cache::forever(Keyboards::GENERAL_KEY, 555);
+    $this->artisan('threadlive:setup')->assertSuccessful();
+    expect(collect(telegramCalls('sendMessage'))->contains(fn (array $c) => ($c['reply_markup']['remove_keyboard'] ?? false) === true))->toBeTrue()
+        ->and(Cache::get(Keyboards::GENERAL_KEY))->toBeNull();
 });
 
 it('says so when there is no token', function () {

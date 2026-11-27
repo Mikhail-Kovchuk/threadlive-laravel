@@ -87,7 +87,7 @@ describe('manager commands', function () {
 
         expect($conversation->messages()->where('direction', Direction::Agent)->count())->toBe(0)
             ->and(telegramCalls('sendMessage')[0]['message_thread_id'])->toBe(300)
-            ->and(telegramCalls('sendMessage')[1]['text'])->toContain('Unknown command /unknown. Try /find, /lookup.');
+            ->and(telegramCalls('sendMessage')[1]['text'])->toContain('Unknown command /unknown. Try /settings, /faq, /find, /lookup.');
     });
 
     it('leaves commands for other bots alone', function () {
@@ -98,13 +98,25 @@ describe('manager commands', function () {
         expect(telegramCalls('sendMessage'))->toBeEmpty();
     });
 
-    it('puts the app\'s commands in the group\'s menu on setup', function () {
+    it('puts only /settings in the group\'s "/" menu by default', function () {
         localSetupTelegram();
+
+        $this->artisan('threadlive:setup', ['--local' => true])->assertSuccessful();
+
+        expect(telegramCalls('setMyCommands')[0]['commands'])->toBe([
+            ['command' => 'settings', 'description' => 'Settings: the FAQ and more'],
+        ]);
+    });
+
+    it('puts the commands command_menu lists in the "/" menu — all of them with null', function () {
+        localSetupTelegram();
+        config()->set('threadlive.command_menu', null);
 
         $this->artisan('threadlive:setup', ['--local' => true])->assertSuccessful();
 
         expect(telegramCalls('setMyCommands')[0])->toMatchArray([
             'commands' => [
+                ['command' => 'settings', 'description' => 'Settings: the FAQ and more'],
                 ['command' => 'menu', 'description' => 'Buttons for this conversation (in its topic)'],
                 ['command' => 'close', 'description' => 'Close this conversation (in its topic)'],
                 ['command' => 'faq', 'description' => 'Quick answers: get faq.json; send one with the caption /faq to replace it'],
@@ -113,6 +125,80 @@ describe('manager commands', function () {
             ],
             'scope' => ['type' => 'chat', 'chat_id' => '-1001234567890'],
         ]);
+    });
+
+    it('picks from the "/" menu what command_menu lists, in its order, naming what is not there', function () {
+        localSetupTelegram();
+        config()->set('threadlive.command_menu', ['lookup', '/settings', 'translate', 'nope']);
+
+        $this->artisan('threadlive:setup', ['--local' => true])
+            ->expectsOutputToContain('there is no command “translate”')
+            ->assertSuccessful();
+
+        expect(collect(telegramCalls('setMyCommands')[0]['commands'])->pluck('command')->all())->toBe(['lookup', 'settings']);
+    });
+
+    it('keeps the settings in a closed "⚙️ Settings" topic: /settings elsewhere points to it', function () {
+        fakeTelegram();
+        telegramUpdate(['message' => generalMessage('/settings@support_test_bot')])->assertOk();
+
+        // The topic, made: the panel pinned in it, the topic closed.
+        expect(telegramCalls('createForumTopic')[0]['name'])->toBe('⚙️ Settings');
+        $panel = telegramCalls('sendMessage')[0];
+        expect($panel['message_thread_id'])->toBe(101)
+            ->and($panel['reply_markup']['inline_keyboard'][0][0])->toBe(['text' => '📚 FAQ', 'callback_data' => 'tl:set:faq'])
+            ->and(telegramCalls('pinChatMessage')[0]['message_id'])->toBe(1001)
+            ->and(telegramCalls('closeForumTopic')[0]['message_thread_id'])->toBe(101);
+
+        // In General: the /settings message gone, a button to the topic, quoting nothing.
+        $pointer = telegramCalls('sendMessage')[1];
+        expect($pointer['message_thread_id'] ?? null)->toBeNull()
+            ->and($pointer['reply_parameters'] ?? null)->toBeNull()
+            ->and($pointer['reply_markup']['inline_keyboard'][0][0]['url'])->toBe('https://t.me/c/1234567890/101')
+            ->and(telegramCalls('deleteMessage')[0]['message_id'])->toBe(6000);
+
+        // /settings in the topic: the panel afresh, the old one removed; no topic made again.
+        $inTopic = generalMessage('/settings', 6001);
+        $inTopic += ['message_thread_id' => 101, 'is_topic_message' => true];
+        telegramUpdate(['message' => $inTopic])->assertOk();
+        expect(telegramCalls('createForumTopic'))->toHaveCount(1)
+            ->and(collect(telegramCalls('sendMessage'))->last()['message_thread_id'])->toBe(101)
+            ->and(array_column(telegramCalls('deleteMessage'), 'message_id'))->toContain(1001);
+
+        // 📚 FAQ from the panel: posted in the topic, quoting nothing.
+        telegramUpdate(['callback_query' => [
+            'id' => 'cb-set',
+            'data' => 'tl:set:faq',
+            'from' => ['id' => 77, 'first_name' => 'Maria'],
+            'message' => ['message_id' => 1003, 'message_thread_id' => 101, 'is_topic_message' => true, 'chat' => ['id' => -1001234567890]],
+        ]])->assertOk();
+
+        $faq = collect(telegramCalls('sendMessage'))->last();
+        expect($faq['text'])->toContain('No FAQ yet')
+            ->and($faq['message_thread_id'])->toBe(101)
+            ->and($faq['reply_parameters'] ?? null)->toBeNull();
+    });
+
+    it('makes the settings topic again when it was deleted by hand', function () {
+        fakeTelegram();
+        telegramUpdate(['message' => generalMessage('/settings')]);
+
+        fakeTelegram(['reopenForumTopic' => fn (array $params, int $nth) => $nth === 2 ? ['error' => 'Bad Request: TOPIC_DELETED'] : true]);
+        telegramUpdate(['message' => generalMessage('/settings', 6001)]);
+
+        expect(telegramCalls('createForumTopic'))->toHaveCount(2)
+            ->and(collect(telegramCalls('sendMessage'))->last()['reply_markup']['inline_keyboard'][0][0]['url'])->toBe('https://t.me/c/1234567890/102');
+    });
+
+    it('answers an unknown command addressed to this bot by name, and stays out of other bots\'', function () {
+        fakeTelegram(['getMe' => ['id' => 999, 'is_bot' => true, 'username' => 'support_test_bot']]);
+
+        telegramUpdate(['message' => generalMessage('/nope@Support_Test_Bot')]);
+        expect(telegramCalls('sendMessage')[0]['text'])->toContain('Unknown command /nope');
+
+        telegramUpdate(['message' => generalMessage('/start@SomeOtherBot', 6001)]);
+        expect(telegramCalls('sendMessage'))->toHaveCount(1)
+            ->and(telegramCalls('getMe'))->toHaveCount(1); // asked once
     });
 
     it('names a wrong entry in the commands list on setup', function () {

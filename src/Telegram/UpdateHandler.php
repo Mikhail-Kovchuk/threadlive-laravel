@@ -20,6 +20,8 @@ use Threadlive\Models\Message;
 use Threadlive\Support\Attachments;
 use Threadlive\Support\ConversationActions;
 use Threadlive\Support\Faq;
+use Threadlive\Support\GroupSettings;
+use Threadlive\Support\WorkingHours;
 use Threadlive\Translation\Languages;
 use Threadlive\Translation\Translation;
 use Threadlive\Translation\TranslationService;
@@ -52,6 +54,20 @@ final class UpdateHandler
     /** Cache key of a conversation's /menu panel → its message id (one at a time). */
     private const PANEL_KEY = 'threadlive:panel:';
 
+    /** Cache key of this bot's username, for "/command@ThisBot". */
+    private const USERNAME_KEY = 'threadlive:bot:username';
+
+    /** Cache key of a "send the new …" question → the setting its reply sets. */
+    private const SETTING_PROMPT_KEY = 'threadlive:setting-prompt:';
+
+    /** Cache key of an admin who pressed ✏️ Change, per place → the setting their next message sets. */
+    private const SETTING_WAIT_KEY = 'threadlive:setting-wait:';
+
+    private const SETTING_WAIT_MINUTES = 10;
+
+    /** Cache key: this user is an admin of the group (checked again after a while). */
+    private const ADMIN_KEY = 'threadlive:admin:';
+
     public function __construct(
         private readonly TelegramClient $telegram,
         private readonly Commands $commands,
@@ -59,6 +75,8 @@ final class UpdateHandler
         private readonly TranslationService $translation,
         private readonly ActionPanel $panel,
         private readonly AssistantService $assistant,
+        private readonly SettingsTopic $settingsTopic,
+        private readonly Report $report,
     ) {}
 
     /**
@@ -99,6 +117,23 @@ final class UpdateHandler
         $command = $message['text'] ?? $message['caption'] ?? null;
         if (! $edited && is_string($command) && preg_match('/^\/faq(@\w+)?$/i', trim($command)) === 1) {
             $this->faq($message);
+
+            return;
+        }
+
+        // /settings, anywhere: the group's own settings, as buttons.
+        if (! $edited && is_string($message['text'] ?? null) && preg_match('/^\/settings(@\w+)?$/i', trim($message['text'])) === 1) {
+            $this->postSettings($message);
+
+            return;
+        }
+
+        // The answer to a setting's "send the new …" — a reply to it, or the
+        // admin's next message in that place: the new value, never a
+        // message to a visitor, even in a conversation's topic.
+        $waiting = $edited ? null : $this->settingWaitingFor($message);
+        if ($waiting !== null) {
+            $this->saveSetting($waiting['setting'], $waiting['prompt'], $message);
 
             return;
         }
@@ -453,8 +488,39 @@ final class UpdateHandler
         $message = is_array($query['message'] ?? null) ? $query['message'] : [];
         $from = is_array($query['from'] ?? null) ? $query['from'] : [];
 
-        if ($id === null || ! $this->fromOurGroup($message)
-            || preg_match('/^tl:(claim|close|menu|back|tr|cmd|ai):(\d+)(?::([a-z0-9_-]+):([cp]))?$/', $data, $m) !== 1) {
+        if ($id === null || ! $this->fromOurGroup($message)) {
+            return;
+        }
+
+        // The /settings panel's buttons: about the group, not a conversation.
+        // Posted where the panel is, quoting nothing.
+        if ($data === 'tl:set:faq') {
+            $this->answer($id, '');
+            $this->sendFaq(self::placeOf($message));
+
+            return;
+        }
+
+        if (preg_match('/^tl:set:(about|hours|mention)(?::(edit|reset))?$/', $data, $s) === 1) {
+            $this->settingButton($s[1], $s[2] ?? '', $id, $message, $from);
+
+            return;
+        }
+
+        if (preg_match('/^tl:set:assistant(?::(on|off|always|off_hours|reset))?$/', $data, $s) === 1) {
+            $this->assistantSetting($s[1] ?? '', $id, $message, $from);
+
+            return;
+        }
+
+        if ($data === 'tl:set:report') {
+            $this->answer($id, '');
+            $this->replyTo(self::placeOf($message), $this->report->html(now()->subDays(7), now()));
+
+            return;
+        }
+
+        if (preg_match('/^tl:(claim|close|menu|back|tr|cmd|ai):(\d+)(?::([a-z0-9_-]+):([cp]))?$/', $data, $m) !== 1) {
             return;
         }
 
@@ -541,7 +607,9 @@ final class UpdateHandler
         }
 
         if (! $this->assistant->enabled()) {
-            return 'The assistant is not set up: threadlive.assistant.enabled and THREADLIVE_GEMINI_KEY.';
+            return $this->assistant->switchedOn()
+                ? 'The assistant is not set up: THREADLIVE_GEMINI_KEY is empty.'
+                : 'The assistant is off for the whole group: ⚙️ Settings → 🤖 Assistant.';
         }
 
         if ($conversation->withAssistant()) {
@@ -666,6 +734,441 @@ final class UpdateHandler
         if ($panel !== null) {
             $this->cache->put(self::PANEL_KEY.$conversation->id, $panel, now()->addDays(30));
         }
+    }
+
+    /**
+     * /settings: in the "⚙️ Settings" topic, the panel posted afresh at its
+     * bottom; anywhere else, a button to that topic (made when there is
+     * none). The /settings message itself is removed.
+     *
+     * @param  array<mixed>  $message
+     */
+    private function postSettings(array $message): void
+    {
+        $place = self::placeOf($message);
+
+        if (is_int($message['message_id'] ?? null)) {
+            $this->deleteMessage($message['message_id']);
+        }
+
+        try {
+            if ($this->settingsTopic->isIt($place['message_thread_id'])) {
+                $this->settingsTopic->postPanel((int) $place['message_thread_id']);
+
+                return;
+            }
+
+            $this->settingsTopic->ensure();
+        } catch (TelegramException $e) {
+            report($e);
+            $this->replyTo($place, '⚙️ The settings topic could not be made: '.e($e->getMessage()).'. Run php artisan threadlive:setup.');
+
+            return;
+        }
+
+        $link = $this->settingsTopic->link();
+        $this->replyTo($place, '⚙️ The settings have their own topic, “'.SettingsTopic::NAME.'”.', $link === null ? [] : [
+            'reply_markup' => ['inline_keyboard' => [[['text' => '⚙️ Open settings', 'url' => $link]]]],
+        ]);
+    }
+
+    /**
+     * 🏢 Company / 🕘 Hours / 👥 Mentions in /settings: the value shown to
+     * anyone; ✏️ Change (asks for the new one) and ↩️ the config's — the
+     * group's admins only.
+     *
+     * @param  'about'|'hours'|'mention'  $setting
+     * @param  array<mixed>  $message  the panel the button is on
+     * @param  array<mixed>  $from
+     */
+    private function settingButton(string $setting, string $action, string $callbackId, array $message, array $from): void
+    {
+        $place = self::placeOf($message);
+
+        if ($action === '') {
+            $this->answer($callbackId, '');
+            $this->showSetting($setting, $place);
+
+            return;
+        }
+
+        if (! $this->isAdmin($from)) {
+            $this->answer($callbackId, 'Only the group\'s admins can change this.');
+
+            return;
+        }
+
+        $this->answer($callbackId, '');
+
+        if ($action === 'reset') {
+            // The keys are the settings' names.
+            GroupSettings::forget($setting);
+            if ($setting === 'hours') {
+                RefreshDashboard::dispatch();
+            }
+            $this->replyTo($place, match ($setting) {
+                'about' => '↩️ The company text is the config\'s again (assistant.about).',
+                'hours' => '↩️ The support hours are the config\'s again: '.e(WorkingHours::fromConfig()->label()).'.',
+                'mention' => '↩️ The managers called by name are the config\'s again: '.self::mentionsLabel().'.',
+            });
+
+            return;
+        }
+
+        $prompt = $this->replyTo($place, match ($setting) {
+            'about' => '✏️ Write the new company text here — who you are and what you do, for the AI assistant (up to '
+                .GroupSettings::MAX_ABOUT.' characters, any language).',
+            'hours' => '✏️ Write the new support hours here, e.g. <code>09:00-18:00 Europe/Kyiv</code>, or <code>24/7</code>.',
+            'mention' => '✏️ Write the Telegram usernames of the managers to call, e.g. <code>@maria @oleh</code> — or <code>none</code>.',
+        }, [
+            'reply_markup' => ['force_reply' => true, 'input_field_placeholder' => match ($setting) {
+                'about' => 'We are …',
+                'hours' => '09:00-18:00 Europe/Kyiv',
+                'mention' => '@maria @oleh',
+            }],
+        ]);
+
+        if ($prompt !== null && is_int($from['id'] ?? null)) {
+            $waiting = ['setting' => $setting, 'prompt' => $prompt];
+            $this->cache->put(self::SETTING_PROMPT_KEY.$prompt, $waiting, self::PROMPT_TTL);
+            $this->cache->put(self::settingWaitKey($from['id'], $place), $waiting, now()->addMinutes(self::SETTING_WAIT_MINUTES));
+        }
+    }
+
+    /**
+     * The setting a message answers: it replies to the "send the new …"
+     * question, or it is the next message of the admin who asked, in the
+     * same place, within SETTING_WAIT_MINUTES. Never a command.
+     *
+     * @param  array<mixed>  $message
+     * @return array{setting: 'about'|'hours'|'mention', prompt: int}|null
+     */
+    private function settingWaitingFor(array $message): ?array
+    {
+        $text = $message['text'] ?? null;
+        if (! is_string($text) || str_starts_with(trim($text), '/')) {
+            return null;
+        }
+
+        $repliedTo = $message['reply_to_message']['message_id'] ?? null;
+        $waiting = is_int($repliedTo) ? $this->cache->get(self::SETTING_PROMPT_KEY.$repliedTo) : null;
+
+        $from = $message['from']['id'] ?? null;
+        if (! is_array($waiting) && is_int($from)) {
+            $waiting = $this->cache->get(self::settingWaitKey($from, self::placeOf($message)));
+        }
+
+        return is_array($waiting) && in_array($waiting['setting'] ?? null, ['about', 'hours', 'mention'], true) && is_int($waiting['prompt'] ?? null)
+            ? ['setting' => $waiting['setting'], 'prompt' => $waiting['prompt']]
+            : null;
+    }
+
+    /**
+     * The value is saved: the question is answered, the admin no longer
+     * awaited.
+     *
+     * @param  array<mixed>  $message
+     */
+    private function settingDone(int $prompt, array $message): void
+    {
+        $this->cache->forget(self::SETTING_PROMPT_KEY.$prompt);
+
+        if (is_int($message['from']['id'] ?? null)) {
+            $this->cache->forget(self::settingWaitKey($message['from']['id'], self::placeOf($message)));
+        }
+    }
+
+    /**
+     * @param  array{message_thread_id: int|null, is_topic_message: bool}  $place
+     */
+    private static function settingWaitKey(int $userId, array $place): string
+    {
+        return self::SETTING_WAIT_KEY.$userId.':'.($place['message_thread_id'] ?? 0);
+    }
+
+    /**
+     * @param  'about'|'hours'|'mention'  $setting
+     * @param  array<mixed>  $place
+     */
+    private function showSetting(string $setting, array $place): void
+    {
+        if ($setting === 'mention') {
+            $html = '👥 <b>Mentions</b> — called by name when a conversation nobody has needs a manager (the AI assistant\'s handoff, a waiting alert): '
+                .self::mentionsLabel()
+                .(GroupSettings::mentions() !== null ? ' (set here).' : ' (from the config, mention).');
+            $overridden = GroupSettings::mentions() !== null;
+        } elseif ($setting === 'about') {
+            $about = $this->assistant->about();
+            if (GroupSettings::about() === null) {
+                // The config's is wrapped like code: one paragraph per run of lines.
+                $about = (string) preg_replace('/(?<!\n)\n(?!\n)/', ' ', $about);
+            }
+            $html = '🏢 <b>Company</b> — what the AI assistant knows about you'
+                .(GroupSettings::about() !== null ? ' (set here)' : ' (from the config, assistant.about)').":\n\n"
+                .($about !== '' ? e(Str::limit($about, 3500)) : '<i>(empty)</i>');
+            $overridden = GroupSettings::about() !== null;
+        } else {
+            $hours = WorkingHours::fromConfig();
+            $html = '🕘 <b>Support hours</b>: '.e($hours->label())
+                .(GroupSettings::hours() !== null ? ' (set here)' : ' (from the config)')
+                .'. '.($hours->isOpen(now()) ? 'Open now.' : 'Closed now.');
+            $overridden = GroupSettings::hours() !== null;
+        }
+
+        $buttons = [['text' => '✏️ Change', 'callback_data' => "tl:set:{$setting}:edit"]];
+        if ($overridden) {
+            $buttons[] = ['text' => '↩️ The config\'s', 'callback_data' => "tl:set:{$setting}:reset"];
+        }
+
+        $this->replyTo($place, $html, ['reply_markup' => ['inline_keyboard' => [$buttons]]]);
+    }
+
+    /**
+     * The reply to "send the new …": checked, then saved — by an admin.
+     *
+     * @param  array<mixed>  $message
+     */
+    private function saveSetting(string $setting, int $prompt, array $message): void
+    {
+        $from = is_array($message['from'] ?? null) ? $message['from'] : [];
+        $text = is_string($message['text'] ?? null) ? trim($message['text']) : '';
+
+        if (! $this->isAdmin($from)) {
+            $this->replyTo($message, 'Only the group\'s admins can change this.');
+
+            return;
+        }
+
+        if ($setting === 'mention') {
+            $parsed = Mentions::parse($text);
+            if ($parsed['wrong'] !== [] || ($parsed['names'] === [] && $text === '')) {
+                $this->replyTo($message, '❌ '.($parsed['wrong'] !== [] ? 'Not usernames: '.e(implode(', ', $parsed['wrong'])).'. ' : '')
+                    .'Write e.g. <code>@maria @oleh</code>, or <code>none</code>.');
+
+                return;
+            }
+
+            GroupSettings::set(GroupSettings::MENTION, $parsed['names']);
+            $this->settingDone($prompt, $message);
+            $this->replyTo($message, $parsed['names'] === []
+                ? '✅ Nobody is called by name now.'
+                : '✅ Called by name from now on: '.e(implode(' ', $parsed['names'])).'.');
+
+            return;
+        }
+
+        if ($setting === 'about') {
+            if ($text === '' || mb_strlen($text) > GroupSettings::MAX_ABOUT) {
+                $this->replyTo($message, '❌ Send the company text as a message of up to '.GroupSettings::MAX_ABOUT.' characters.');
+
+                return;
+            }
+
+            GroupSettings::set(GroupSettings::ABOUT, $text);
+            $this->settingDone($prompt, $message);
+            $this->replyTo($message, '✅ Company text saved: the AI assistant uses it from its next answer.');
+
+            return;
+        }
+
+        $hours = WorkingHours::parse($text, WorkingHours::fromConfig()->tz);
+        if ($hours === null) {
+            $this->replyTo($message, '❌ Not understood. Send e.g. <code>09:00-18:00 Europe/Kyiv</code> (the zone may be left out), or <code>24/7</code>.');
+
+            return;
+        }
+
+        GroupSettings::set(GroupSettings::HOURS, $hours->toArray());
+        $this->settingDone($prompt, $message);
+        RefreshDashboard::dispatch();
+        $this->replyTo($message, '✅ Support hours: '.e($hours->label()).'. The widget, the assistant and the alerts follow them now.');
+    }
+
+    /** "@maria @oleh", or "nobody". */
+    private static function mentionsLabel(): string
+    {
+        $mentions = Mentions::list();
+
+        return $mentions === [] ? 'nobody' : e(implode(' ', $mentions));
+    }
+
+    /**
+     * 🤖 Assistant in /settings: on or off, and when it answers — shown to
+     * anyone, switched by the group's admins with the buttons under it,
+     * which change the same post in place.
+     *
+     * @param  ''|'on'|'off'|'always'|'off_hours'|'reset'  $action
+     * @param  array<mixed>  $message  the post the button is on
+     * @param  array<mixed>  $from
+     */
+    private function assistantSetting(string $action, string $callbackId, array $message, array $from): void
+    {
+        if ($action === '') {
+            $this->answer($callbackId, '');
+            [$html, $keyboard] = $this->assistantStatus();
+            $this->replyTo(self::placeOf($message), $html, ['reply_markup' => ['inline_keyboard' => $keyboard]]);
+
+            return;
+        }
+
+        if (! $this->isAdmin($from)) {
+            $this->answer($callbackId, 'Only the group\'s admins can change this.');
+
+            return;
+        }
+
+        if ($action === 'on' && $this->assistant->driver() === null) {
+            $this->answer($callbackId, 'The assistant is not set up: THREADLIVE_GEMINI_KEY is empty.');
+
+            return;
+        }
+
+        match ($action) {
+            'on', 'off' => GroupSettings::setAssistant('enabled', $action === 'on'),
+            'always', 'off_hours' => GroupSettings::setAssistant('first', $action),
+            'reset' => GroupSettings::forget(GroupSettings::ASSISTANT),
+        };
+
+        $this->answer($callbackId, match ($action) {
+            'on' => 'The assistant is on.',
+            'off' => 'The assistant is off: new conversations go to the managers.',
+            'always' => 'It answers every new conversation first.',
+            'off_hours' => 'It answers only outside the support hours.',
+            'reset' => 'As the config says again.',
+        });
+
+        [$html, $keyboard] = $this->assistantStatus();
+        $this->editMessage($message, $html, $keyboard);
+        RefreshDashboard::dispatch();
+    }
+
+    /**
+     * @return array{string, list<list<array{text: string, callback_data: string}>>}
+     */
+    private function assistantStatus(): array
+    {
+        $on = $this->assistant->switchedOn();
+        $offHours = $this->assistant->first() === 'off_hours';
+        $own = GroupSettings::get(GroupSettings::ASSISTANT) !== null;
+
+        $html = '🤖 <b>AI assistant</b>: '.($on ? 'on' : 'off')
+            .($on ? ' — it answers '.($offHours
+                ? 'new conversations only outside the support hours ('.e(WorkingHours::fromConfig()->label()).')'
+                : 'every new conversation first').', and hands it to you when it cannot help' : '')
+            .($own ? ' (set here).' : ' (from the config).');
+
+        if ($on && $this->assistant->driver() === null) {
+            $html .= "\n⚠️ Not set up: THREADLIVE_GEMINI_KEY is empty, so the managers answer everything.";
+        }
+
+        $keyboard = [[
+            $on
+                ? ['text' => '⏸ Switch off', 'callback_data' => 'tl:set:assistant:off']
+                : ['text' => '▶️ Switch on', 'callback_data' => 'tl:set:assistant:on'],
+            $offHours
+                ? ['text' => '🕐 Always', 'callback_data' => 'tl:set:assistant:always']
+                : ['text' => '🌙 Only outside the hours', 'callback_data' => 'tl:set:assistant:off_hours'],
+        ]];
+
+        if ($own) {
+            $keyboard[] = [['text' => '↩️ The config\'s', 'callback_data' => 'tl:set:assistant:reset']];
+        }
+
+        return [$html, $keyboard];
+    }
+
+    /**
+     * A post of the bot's changed in place: its text and its buttons.
+     *
+     * @param  array<mixed>  $message
+     * @param  list<list<array<string, string>>>  $keyboard
+     */
+    private function editMessage(array $message, string $html, array $keyboard): void
+    {
+        if (! is_int($message['message_id'] ?? null)) {
+            return;
+        }
+
+        try {
+            $this->telegram->call('editMessageText', [
+                'chat_id' => (string) config('threadlive.chat_id'),
+                'message_id' => $message['message_id'],
+                'text' => $html,
+                'parse_mode' => 'HTML',
+                'link_preview_options' => ['is_disabled' => true],
+                'reply_markup' => ['inline_keyboard' => $keyboard],
+            ]);
+        } catch (TelegramException $e) {
+            if (! $e->isNotModified()) {
+                report($e);
+            }
+        }
+    }
+
+    /**
+     * An admin (or the creator) of the group, as Telegram says — asked again
+     * after five minutes, so a demotion counts soon.
+     *
+     * @param  array<mixed>  $from
+     */
+    private function isAdmin(array $from): bool
+    {
+        $id = $from['id'] ?? null;
+        if (! is_int($id)) {
+            return false;
+        }
+
+        $cached = $this->cache->get(self::ADMIN_KEY.$id);
+        if (is_bool($cached)) {
+            return $cached;
+        }
+
+        try {
+            $member = $this->telegram->call('getChatMember', ['chat_id' => (string) config('threadlive.chat_id'), 'user_id' => $id]);
+        } catch (TelegramException $e) {
+            report($e);
+
+            return false;
+        }
+
+        $admin = is_array($member) && in_array($member['status'] ?? null, ['creator', 'administrator'], true);
+        $this->cache->put(self::ADMIN_KEY.$id, $admin, now()->addMinutes(5));
+
+        return $admin;
+    }
+
+    /**
+     * Where a message is — its topic, or General — without the message
+     * itself: what replyTo() takes to post there quoting nothing.
+     *
+     * @param  array<mixed>  $message
+     * @return array{message_thread_id: int|null, is_topic_message: bool}
+     */
+    private static function placeOf(array $message): array
+    {
+        $inTopic = is_int($message['message_thread_id'] ?? null) && ($message['is_topic_message'] ?? false) === true;
+
+        return ['message_thread_id' => $inTopic ? $message['message_thread_id'] : null, 'is_topic_message' => $inTopic];
+    }
+
+    /** "ThisBot" in "/x@ThisBot": this bot's username, asked of Telegram once. */
+    private function isOurBot(string $username): bool
+    {
+        $ours = $this->cache->get(self::USERNAME_KEY);
+
+        if (! is_string($ours)) {
+            try {
+                $me = $this->telegram->call('getMe');
+                $ours = is_array($me) && is_string($me['username'] ?? null) ? $me['username'] : '';
+                $this->cache->put(self::USERNAME_KEY, $ours, now()->addDay());
+            } catch (TelegramException $e) {
+                report($e);
+
+                return false;
+            }
+        }
+
+        return $ours !== '' && strcasecmp($ours, $username) === 0;
     }
 
     /**
@@ -840,9 +1343,12 @@ final class UpdateHandler
         $commands = array_map(fn (ManagerCommand $c) => $c->description(), $all = $this->commands->all());
 
         if (! array_key_exists($name, $commands)) {
-            // "/start@SomeOtherBot" is someone else's; a bare one is ours.
-            if (($m[2] ?? '') === '') {
-                $this->replyTo($message, 'Unknown command /'.e($name).'. Try '.implode(', ', array_map(fn (string $c) => '/'.$c, array_keys($commands))).'.');
+            // "/start@SomeOtherBot" is someone else's; a bare one is ours,
+            // and so is "/x@ThisBot" (the "/" menu adds the bot's name).
+            if (($m[2] ?? '') === '' || $this->isOurBot(substr($m[2], 1))) {
+                // What works here: the package's commands for anywhere, then /find and the app's.
+                $works = ['settings', 'faq', ...array_keys($commands)];
+                $this->replyTo($message, 'Unknown command /'.e($name).'. Try '.implode(', ', array_map(fn (string $c) => '/'.$c, $works)).'.');
             }
 
             return true;

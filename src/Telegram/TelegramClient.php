@@ -137,12 +137,13 @@ final class TelegramClient
     }
 
     /**
-     * @param  list<list<array{text: string, callback_data: string}>>|null  $keyboard
+     * @param  list<list<array{text: string, callback_data: string}>>|null  $keyboard  buttons under the message
+     * @param  array<string, mixed>|null  $replyMarkup  any other reply_markup (the keyboard under the field)
      * @return int the message id
      *
      * @throws TelegramException
      */
-    public function sendMessage(string $chatId, string $html, ?int $threadId = null, bool $silent = true, ?array $keyboard = null): int
+    public function sendMessage(string $chatId, string $html, ?int $threadId = null, bool $silent = true, ?array $keyboard = null, ?array $replyMarkup = null): int
     {
         $result = $this->call('sendMessage', [
             'chat_id' => $chatId,
@@ -151,7 +152,7 @@ final class TelegramClient
             'parse_mode' => 'HTML',
             'disable_notification' => $silent,
             'link_preview_options' => ['is_disabled' => true],
-            'reply_markup' => $keyboard === null ? null : ['inline_keyboard' => $keyboard],
+            'reply_markup' => $keyboard !== null ? ['inline_keyboard' => $keyboard] : $replyMarkup,
         ]);
 
         return is_array($result) && is_int($result['message_id'] ?? null) ? $result['message_id'] : 0;

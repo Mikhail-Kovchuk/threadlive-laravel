@@ -48,7 +48,7 @@ final class AssistantPosts
      * "🙋 Needs a manager: why" and the assistant's summary, with sound, in
      * the topic — calling the manager who has the conversation by name.
      * Nobody has it: the same in General too, with a button to the topic and
-     * the managers of config('threadlive.mention') called by name, so it is
+     * the managers of 👥 Mentions (config mention) called by name, so it is
      * seen outside the topic list.
      *
      * @throws TelegramException
@@ -72,7 +72,7 @@ final class AssistantPosts
         }
 
         $visitor = e($conversation->name ?: 'Guest').' · #'.$conversation->id;
-        $mentions = Mentions::fromConfig();
+        $mentions = Mentions::managers();
         $link = Dashboard::topicLink($conversation->refresh());
 
         // The topic has it already: a failure here is reported, never a

@@ -141,10 +141,10 @@ final class MaintainCommand extends Command
             $link = Dashboard::topicLink($conversation);
             $who = $link ? '<a href="'.e($link).'">'.$name.'</a>' : $name;
             $age = Dashboard::age(Dashboard::waitingSince($conversation), now());
-            // Called by name: the manager who has it, or config('threadlive.mention').
+            // Called by name: the manager who has it, or 👥 Mentions (config mention).
             $mention = $conversation->assignee_tg_id !== null
                 ? Mentions::user($conversation->assignee_tg_id, (string) ($conversation->assignee_name ?: 'Manager'))
-                : Mentions::fromConfig();
+                : Mentions::managers();
 
             try {
                 // With sound: this is the one General post that should be heard.

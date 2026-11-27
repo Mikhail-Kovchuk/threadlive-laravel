@@ -101,7 +101,7 @@ describe('a guest conversation', function () {
             ->assertJsonPath('context', null)
             ->assertJsonPath('conversation', [
                 'status' => 'waiting', 'unread' => 0, 'email' => null, 'active' => true,
-                'handler' => 'human', 'assistant_typing' => false,
+                'handler' => 'human', 'assistant_typing' => false, 'rating' => null,
             ]);
 
         $token = $first->json('visitor_token');

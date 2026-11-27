@@ -50,6 +50,31 @@ it('opens a topic named for its state, posts the visitor card, then the message'
     expect($conversation->messages()->first()?->delivery)->toBe(Delivery::Sent);
 });
 
+it('gives a new topic the managers\' buttons with its first post, once', function () {
+    fakeTelegram();
+    $token = sendMessage('Hello')->json('visitor_token');
+    deliver();
+    sendMessage('Anyone there?', $token);
+    deliver();
+
+    $posts = collect(telegramCalls('sendMessage'))->filter(fn (array $c) => ($c['message_thread_id'] ?? null) === 101)->values();
+    $keyboard = $posts[1]['reply_markup']['keyboard'] ?? null;
+
+    expect($keyboard)->not->toBeNull()
+        ->and(array_merge(...array_map(fn (array $row) => array_column($row, 'text'), $keyboard)))->toBe(['/menu', '/close'])
+        ->and($posts[1]['reply_markup']['is_persistent'])->toBeTrue()
+        ->and($posts[2]['reply_markup'] ?? null)->toBeNull();
+});
+
+it('gives a topic no buttons with keyboard.enabled = false', function () {
+    fakeTelegram();
+    config()->set('threadlive.keyboard.enabled', false);
+    sendMessage('Hello');
+    deliver();
+
+    expect(collect(telegramCalls('sendMessage'))->contains(fn (array $c) => isset($c['reply_markup']['keyboard'])))->toBeFalse();
+});
+
 it('sends a burst as one message, escaped, in the same topic as before', function () {
     fakeTelegram();
     $token = sendMessage('First')->json('visitor_token');
